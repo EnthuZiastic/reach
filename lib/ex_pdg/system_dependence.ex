@@ -15,7 +15,7 @@ defmodule ExPDG.SystemDependence do
   for context-sensitive interprocedural slicing.
   """
 
-  alias ExPDG.{CallGraph, ControlDependence, ControlFlow, DataDependence, IR}
+  alias ExPDG.{CallGraph, ControlDependence, ControlFlow, DataDependence, IR, OTP}
   alias ExPDG.IR.Node
 
   @type function_id :: CallGraph.function_id()
@@ -59,6 +59,9 @@ defmodule ExPDG.SystemDependence do
     graph = merge_function_pdgs(function_pdgs)
     graph = add_call_edges(graph, all_nodes, func_defs, function_pdgs)
     graph = add_summary_edges(graph, all_nodes, func_defs, function_pdgs)
+
+    otp_edges = OTP.analyze(ir_nodes)
+    graph = merge_libgraphs(graph, otp_edges)
 
     %__MODULE__{
       graph: graph,
