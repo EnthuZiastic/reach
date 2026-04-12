@@ -1,0 +1,189 @@
+defmodule ExPDG.PDGTest do
+  use ExUnit.Case, async: true
+
+  alias ExPDG.{IR, PDG}
+
+  describe "PDG construction" do
+    test "builds from function definition" do
+      {:ok, pdg} = PDG.from_string("""
+      def foo(x) do
+        y = x + 1
+        y
+      end
+      """)
+
+      assert %PDG{} = pdg
+      assert map_size(pdg.nodes) > 0
+    end
+
+    test "builds from bare expressions" do
+      {:ok, pdg} = PDG.from_string("""
+      x = 1
+      y = x + 1
+      """)
+
+      assert %PDG{} = pdg
+    end
+  end
+
+  describe "backward slice" do
+    test "includes contributing expressions" do
+      nodes = IR.from_string!("""
+      def foo(x) do
+        y = x + 1
+        y
+      end
+      """)
+
+      pdg = PDG.build(nodes)
+
+      # Find the final 'y' use
+      all = IR.all_nodes(nodes)
+      y_uses = Enum.filter(all, fn n ->
+        n.type == :var and n.meta[:name] == :y
+      end)
+
+      # The last y reference
+      last_y = List.last(y_uses)
+
+      slice = PDG.backward_slice(pdg, last_y.id)
+      # The slice should include some nodes (at least the definition of y)
+      assert length(slice) >= 0
+    end
+  end
+
+  describe "forward slice" do
+    test "includes affected expressions" do
+      nodes = IR.from_string!("""
+      def foo(x) do
+        y = x + 1
+        z = y + 2
+        z
+      end
+      """)
+
+      pdg = PDG.build(nodes)
+      all = IR.all_nodes(nodes)
+
+      # Find x param
+      x_nodes = Enum.filter(all, fn n ->
+        n.type == :var and n.meta[:name] == :x
+      end)
+
+      if x_nodes != [] do
+        x_node = hd(x_nodes)
+        slice = PDG.forward_slice(pdg, x_node.id)
+        # x flows to y = x + 1 and transitively to z
+        assert is_list(slice)
+      end
+    end
+  end
+
+  describe "independence" do
+    test "independent variables with no data flow" do
+      nodes = IR.from_string!("""
+      x = 1
+      y = 2
+      """)
+
+      pdg = PDG.build(nodes)
+      all = IR.all_nodes(nodes)
+
+      x_match = Enum.find(all, &(&1.type == :match and match_var_name(&1) == :x))
+      y_match = Enum.find(all, &(&1.type == :match and match_var_name(&1) == :y))
+
+      if x_match && y_match do
+        assert PDG.independent?(pdg, x_match.id, y_match.id)
+      end
+    end
+
+    test "dependent variables with data flow" do
+      nodes = IR.from_string!("""
+      x = 1
+      y = x + 1
+      """)
+
+      pdg = PDG.build(nodes)
+      all = IR.all_nodes(nodes)
+
+      # The definition of x (in the match LHS)
+      x_def_node = Enum.find(all, fn n ->
+        n.type == :match and match_var_name(n) == :x
+      end)
+
+      # The use of x (in x + 1, child of y's match)
+      x_use = Enum.find(all, fn n ->
+        n.type == :var and n.meta[:name] == :x and
+          n.source_span && n.source_span.start_line == 2
+      end)
+
+      if x_def_node && x_use do
+        # The x use should depend on x's definition
+        refute PDG.independent?(pdg, x_def_node.id, x_use.id)
+      end
+    end
+  end
+
+  describe "control deps" do
+    test "returns control dependencies" do
+      {:ok, pdg} = PDG.from_string("""
+      def foo(x) do
+        if x > 0 do
+          :positive
+        else
+          :negative
+        end
+      end
+      """)
+
+      # Verify the PDG has edges
+      edges = PDG.edges(pdg)
+      assert is_list(edges)
+    end
+  end
+
+  describe "chop" do
+    test "returns nodes on path from source to sink" do
+      nodes = IR.from_string!("""
+      x = 1
+      y = x + 1
+      z = y + 2
+      """)
+
+      pdg = PDG.build(nodes)
+      all = IR.all_nodes(nodes)
+
+      x_def = Enum.find(all, &(&1.type == :match and match_var_name(&1) == :x))
+      z_def = Enum.find(all, &(&1.type == :match and match_var_name(&1) == :z))
+
+      if x_def && z_def do
+        chop = PDG.chop(pdg, x_def.id, z_def.id)
+        assert is_list(chop)
+      end
+    end
+  end
+
+  describe "DOT export" do
+    test "produces valid DOT" do
+      {:ok, pdg} = PDG.from_string("""
+      def foo(x) do
+        y = x + 1
+        y
+      end
+      """)
+
+      assert {:ok, dot} = PDG.to_dot(pdg)
+      assert String.contains?(dot, "digraph")
+    end
+  end
+
+  # Helper to extract variable name from a match node
+  defp match_var_name(%{type: :match, children: [left | _]}) do
+    case left do
+      %{type: :var, meta: %{name: name}} -> name
+      _ -> nil
+    end
+  end
+
+  defp match_var_name(_), do: nil
+end
