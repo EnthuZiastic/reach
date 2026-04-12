@@ -6,7 +6,7 @@ defmodule ExPDG.Graph do
   Provides slicing and independence queries.
   """
 
-  alias ExPDG.{IR, ControlFlow, ControlDependence, DataDependence}
+  alias ExPDG.{IR, ControlFlow, ControlDependence, DataDependence, Effects}
   alias ExPDG.IR.Node
 
   @type t :: %__MODULE__{
@@ -142,12 +142,14 @@ defmodule ExPDG.Graph do
   Two nodes are independent if:
   1. No data-dependence path between them
   2. They have the same control dependencies
+  3. Their effects don't conflict
   """
   @spec independent?(t(), Node.id(), Node.id()) :: boolean()
-  def independent?(%__MODULE__{graph: graph} = pdg, id_x, id_y) do
+  def independent?(%__MODULE__{graph: graph, nodes: node_map} = pdg, id_x, id_y) do
     not data_reachable?(graph, id_x, id_y) and
       not data_reachable?(graph, id_y, id_x) and
-      same_control_deps?(pdg, id_x, id_y)
+      same_control_deps?(pdg, id_x, id_y) and
+      not conflicting_effects?(node_map, id_x, id_y)
   end
 
   @doc """
@@ -220,6 +222,16 @@ defmodule ExPDG.Graph do
           g
       end
     end)
+  end
+
+  defp conflicting_effects?(node_map, id_x, id_y) do
+    case {Map.get(node_map, id_x), Map.get(node_map, id_y)} do
+      {%{} = x, %{} = y} ->
+        Effects.conflicting?(Effects.classify(x), Effects.classify(y))
+
+      _ ->
+        true
+    end
   end
 
   defp same_control_deps?(pdg, id_x, id_y) do

@@ -1,0 +1,130 @@
+defmodule ExPDG.EffectsTest do
+  use ExUnit.Case, async: true
+
+  alias ExPDG.{IR, Effects}
+
+  defp node_for(source) do
+    [node] = IR.from_string!(source)
+    node
+  end
+
+  describe "classify" do
+    test "literals are pure" do
+      assert Effects.classify(node_for("42")) == :pure
+      assert Effects.classify(node_for(":ok")) == :pure
+      assert Effects.classify(node_for(~s("hello"))) == :pure
+    end
+
+    test "variables are pure" do
+      assert Effects.classify(node_for("x")) == :pure
+    end
+
+    test "data structures are pure" do
+      assert Effects.classify(node_for("{1, 2}")) == :pure
+      assert Effects.classify(node_for("%{a: 1}")) == :pure
+    end
+
+    test "operators are pure" do
+      assert Effects.classify(node_for("x + 1")) == :pure
+      assert Effects.classify(node_for("not x")) == :pure
+    end
+
+    test "pure module calls are pure" do
+      assert Effects.classify(node_for("Enum.map(list, fun)")) == :pure
+      assert Effects.classify(node_for("Map.get(map, key)")) == :pure
+      assert Effects.classify(node_for("String.upcase(s)")) == :pure
+      assert Effects.classify(node_for("List.first(l)")) == :pure
+    end
+
+    test "IO calls are :io" do
+      assert Effects.classify(node_for("IO.puts(x)")) == :io
+      assert Effects.classify(node_for("File.read(path)")) == :io
+    end
+
+    test "send calls are :send" do
+      assert Effects.classify(node_for("GenServer.call(pid, msg)")) == :send
+      assert Effects.classify(node_for("GenServer.cast(pid, msg)")) == :send
+    end
+
+    test "ETS writes are :write" do
+      assert Effects.classify(node_for(":ets.insert(tab, val)")) == :write
+      assert Effects.classify(node_for(":ets.delete(tab, key)")) == :write
+    end
+
+    test "ETS reads are :read" do
+      assert Effects.classify(node_for(":ets.lookup(tab, key)")) == :read
+    end
+
+    test "process dict writes are :write" do
+      assert Effects.classify(node_for("Process.put(key, val)")) == :write
+    end
+
+    test "process dict reads are :read" do
+      assert Effects.classify(node_for("Process.get(key)")) == :read
+    end
+
+    test "raise is :exception" do
+      node = node_for("raise \"boom\"")
+      assert Effects.classify(node) == :exception
+    end
+
+    test "unknown calls default to :unknown" do
+      assert Effects.classify(node_for("some_function(x)")) == :unknown
+    end
+  end
+
+  describe "pure?" do
+    test "true for pure nodes" do
+      assert Effects.pure?(node_for("42"))
+      assert Effects.pure?(node_for("Enum.map(l, f)"))
+    end
+
+    test "false for impure nodes" do
+      refute Effects.pure?(node_for("IO.puts(x)"))
+      refute Effects.pure?(node_for(":ets.insert(t, v)"))
+    end
+  end
+
+  describe "conflicting?" do
+    test "pure never conflicts" do
+      refute Effects.conflicting?(:pure, :pure)
+      refute Effects.conflicting?(:pure, :io)
+      refute Effects.conflicting?(:pure, :write)
+    end
+
+    test "unknown conflicts with non-pure" do
+      assert Effects.conflicting?(:unknown, :io)
+      assert Effects.conflicting?(:unknown, :write)
+      assert Effects.conflicting?(:unknown, :unknown)
+      # pure never conflicts, even with unknown
+      refute Effects.conflicting?(:unknown, :pure)
+      refute Effects.conflicting?(:pure, :unknown)
+    end
+
+    test "write-write conflicts" do
+      assert Effects.conflicting?(:write, :write)
+    end
+
+    test "write-read conflicts" do
+      assert Effects.conflicting?(:write, :read)
+      assert Effects.conflicting?(:read, :write)
+    end
+
+    test "io-io conflicts (ordering matters)" do
+      assert Effects.conflicting?(:io, :io)
+    end
+
+    test "send-send conflicts (message ordering)" do
+      assert Effects.conflicting?(:send, :send)
+    end
+
+    test "send-receive conflicts" do
+      assert Effects.conflicting?(:send, :receive)
+      assert Effects.conflicting?(:receive, :send)
+    end
+
+    test "read-read does not conflict" do
+      refute Effects.conflicting?(:read, :read)
+    end
+  end
+end
