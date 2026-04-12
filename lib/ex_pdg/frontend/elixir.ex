@@ -6,7 +6,7 @@ defmodule ExPDG.Frontend.Elixir do
   the AST into expression-level IR nodes.
   """
 
-  alias ExPDG.IR.{Node, Counter}
+  alias ExPDG.IR.{Counter, Node}
 
   @doc """
   Parses an Elixir source string and returns the IR.
@@ -155,7 +155,12 @@ defmodule ExPDG.Frontend.Elixir do
   defp translate({:|>, meta, [left, right]}, counter, file) do
     desugared = desugar_pipe(left, right)
     node = translate(desugared, counter, file)
-    %{node | meta: Map.put(node.meta, :desugared_from, :pipe), source_span: span_from_meta(meta, file)}
+
+    %{
+      node
+      | meta: Map.put(node.meta, :desugared_from, :pipe),
+        source_span: span_from_meta(meta, file)
+    }
   end
 
   # if/unless — desugar into case
@@ -299,12 +304,17 @@ defmodule ExPDG.Frontend.Elixir do
 
     after_node =
       case rest[:after] do
-        nil -> []
-        after_body -> [%Node{
-          id: Counter.next(counter),
-          type: :after,
-          children: [translate(after_body, counter, file)]
-        }]
+        nil ->
+          []
+
+        after_body ->
+          [
+            %Node{
+              id: Counter.next(counter),
+              type: :after,
+              children: [translate(after_body, counter, file)]
+            }
+          ]
       end
 
     else_nodes = translate_handler_clauses(rest[:else], :clause, counter, file)
@@ -342,13 +352,15 @@ defmodule ExPDG.Frontend.Elixir do
           timeout_node = translate(timeout, counter, file)
           body_node = translate(body, counter, file)
 
-          [%Node{
-            id: Counter.next(counter),
-            type: :clause,
-            meta: %{kind: :timeout_clause},
-            children: [timeout_node, body_node],
-            source_span: span_from_meta(after_meta, file)
-          }]
+          [
+            %Node{
+              id: Counter.next(counter),
+              type: :clause,
+              meta: %{kind: :timeout_clause},
+              children: [timeout_node, body_node],
+              source_span: span_from_meta(after_meta, file)
+            }
+          ]
       end
 
     %Node{
@@ -401,7 +413,7 @@ defmodule ExPDG.Frontend.Elixir do
             source_span: span_from_meta(clause_meta, file)
           }
 
-        {:"<<>>", _, [{:<-, clause_meta, [pattern, enumerable]}]} ->
+        {:<<>>, _, [{:<-, clause_meta, [pattern, enumerable]}]} ->
           pat_node = translate(pattern, counter, file)
           enum_node = translate(enumerable, counter, file)
 
@@ -579,8 +591,30 @@ defmodule ExPDG.Frontend.Elixir do
   end
 
   # Binary operators
-  @binary_ops [:+, :-, :*, :/, :++, :--, :<>, :and, :or, :&&, :||, :==, :!=,
-               :===, :!==, :<, :>, :<=, :>=, :in, :.., :"//"]
+  @binary_ops [
+    :+,
+    :-,
+    :*,
+    :/,
+    :++,
+    :--,
+    :<>,
+    :and,
+    :or,
+    :&&,
+    :||,
+    :==,
+    :!=,
+    :===,
+    :!==,
+    :<,
+    :>,
+    :<=,
+    :>=,
+    :in,
+    :..,
+    :"//"
+  ]
   defp translate({op, meta, [left, right]}, counter, file) when op in @binary_ops do
     left_node = translate(left, counter, file)
     right_node = translate(right, counter, file)
@@ -595,7 +629,7 @@ defmodule ExPDG.Frontend.Elixir do
   end
 
   # Unary operators
-  @unary_ops [:not, :!, :-, :+, :^^^]
+  @unary_ops [:not, :!, :-, :+, :"^^^"]
   defp translate({op, meta, [operand]}, counter, file) when op in @unary_ops do
     operand_node = translate(operand, counter, file)
 
@@ -782,7 +816,9 @@ defmodule ExPDG.Frontend.Elixir do
 
   defp span_from_meta(meta, file) when is_list(meta) do
     case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
-      {nil, _} -> nil
+      {nil, _} ->
+        nil
+
       {line, col} ->
         %{
           file: file,

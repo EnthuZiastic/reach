@@ -18,7 +18,7 @@ defmodule ExPDG.Query do
       data_flows?(graph, source_id, sink_id)
   """
 
-  alias ExPDG.{Graph, Effects}
+  alias ExPDG.{Effects, Graph}
   alias ExPDG.IR.Node
 
   # --- Node queries ---

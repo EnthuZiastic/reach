@@ -1,7 +1,7 @@
 defmodule ExPDG.DataDependenceTest do
   use ExUnit.Case, async: true
 
-  alias ExPDG.{IR, DataDependence}
+  alias ExPDG.{DataDependence, IR}
 
   defp build_data_deps(source) do
     nodes = IR.from_string!(source)
@@ -82,52 +82,57 @@ defmodule ExPDG.DataDependenceTest do
 
   describe "def-use edges" do
     test "x = 1; y = x + 1 creates edge for x" do
-      {_nodes, ddg} = build_data_deps("""
-      x = 1
-      y = x + 1
-      """)
+      {_nodes, ddg} =
+        build_data_deps("""
+        x = 1
+        y = x + 1
+        """)
 
       assert has_data_flow?(ddg, :x)
     end
 
     test "pattern match {a, b} = foo() creates edges" do
-      {_nodes, ddg} = build_data_deps("""
-      {a, b} = foo()
-      a + b
-      """)
+      {_nodes, ddg} =
+        build_data_deps("""
+        {a, b} = foo()
+        a + b
+        """)
 
       assert has_data_flow?(ddg, :a)
       assert has_data_flow?(ddg, :b)
     end
 
     test "no edge between independent variables" do
-      {_nodes, ddg} = build_data_deps("""
-      x = 1
-      y = 2
-      """)
+      {_nodes, ddg} =
+        build_data_deps("""
+        x = 1
+        y = 2
+        """)
 
       edges = data_edges(ddg)
       # x and y are independent — no data flow between them
       assert Enum.all?(edges, fn e ->
-        e.label != {:data, :x} or not_y_def?(e, ddg) 
-      end) or edges == []
+               e.label != {:data, :x} or not_y_def?(e, ddg)
+             end) or edges == []
     end
 
     test "pipe chain value flows through" do
-      {_nodes, ddg} = build_data_deps("""
-      x = 1
-      x |> foo() |> bar()
-      """)
+      {_nodes, ddg} =
+        build_data_deps("""
+        x = 1
+        x |> foo() |> bar()
+        """)
 
       assert has_data_flow?(ddg, :x)
     end
 
     test "function parameter flows to body use" do
-      {_nodes, ddg} = build_data_deps("""
-      def add(x, y) do
-        x + y
-      end
-      """)
+      {_nodes, ddg} =
+        build_data_deps("""
+        def add(x, y) do
+          x + y
+        end
+        """)
 
       assert has_data_flow?(ddg, :x)
       assert has_data_flow?(ddg, :y)

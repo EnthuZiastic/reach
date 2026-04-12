@@ -40,15 +40,20 @@ defmodule ExPDG.DataDependence do
     {defs, []}
   end
 
-  def analyze_bindings(%Node{type: :clause, meta: %{kind: kind}} = node) when kind in [:function_clause, :fn_clause] do
+  def analyze_bindings(%Node{type: :clause, meta: %{kind: kind}} = node)
+      when kind in [:function_clause, :fn_clause] do
     params = node.children |> Enum.reject(&(&1.type in [:guard, :block]))
     defs = Enum.flat_map(params, &collect_definitions/1)
     {defs, []}
   end
 
-  def analyze_bindings(%Node{type: :clause, meta: %{kind: kind}} = node) when kind in [:case_clause, :receive_clause, :with_clause, :else_clause] do
+  def analyze_bindings(%Node{type: :clause, meta: %{kind: kind}} = node)
+      when kind in [:case_clause, :receive_clause, :with_clause, :else_clause] do
     # First children are patterns
-    patterns = node.children |> Enum.take_while(&(&1.type not in [:guard, :block, :call, :binary_op, :literal]))
+    patterns =
+      node.children
+      |> Enum.take_while(&(&1.type not in [:guard, :block, :call, :binary_op, :literal]))
+
     defs = Enum.flat_map(patterns, &collect_definitions/1)
     {defs, []}
   end

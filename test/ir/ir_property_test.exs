@@ -5,7 +5,7 @@ defmodule ExPDG.IR.PropertyTest do
   alias ExPDG.IR
 
   property "all nodes have unique IDs" do
-    check all source <- simple_elixir_source() do
+    check all(source <- simple_elixir_source()) do
       case IR.from_string(source) do
         {:ok, nodes} ->
           all = IR.all_nodes(nodes)
@@ -20,17 +20,45 @@ defmodule ExPDG.IR.PropertyTest do
 
   property "all nodes have a valid type" do
     valid_types = [
-      :entry, :exit, :block, :literal, :var, :match, :call, :case, :clause,
-      :guard, :fn, :try, :rescue, :catch_clause, :after, :receive,
-      :comprehension, :generator, :filter, :binary_op, :unary_op,
-      :tuple, :list, :cons, :map, :map_field, :struct, :pin, :access,
-      :module_def, :function_def, :dispatch
+      :entry,
+      :exit,
+      :block,
+      :literal,
+      :var,
+      :match,
+      :call,
+      :case,
+      :clause,
+      :guard,
+      :fn,
+      :try,
+      :rescue,
+      :catch_clause,
+      :after,
+      :receive,
+      :comprehension,
+      :generator,
+      :filter,
+      :binary_op,
+      :unary_op,
+      :tuple,
+      :list,
+      :cons,
+      :map,
+      :map_field,
+      :struct,
+      :pin,
+      :access,
+      :module_def,
+      :function_def,
+      :dispatch
     ]
 
-    check all source <- simple_elixir_source() do
+    check all(source <- simple_elixir_source()) do
       case IR.from_string(source) do
         {:ok, nodes} ->
           all = IR.all_nodes(nodes)
+
           Enum.each(all, fn node ->
             assert node.type in valid_types, "invalid node type: #{inspect(node.type)}"
           end)

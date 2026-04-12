@@ -172,11 +172,7 @@ defmodule ExPDG.Dominator do
     else
       visited = MapSet.put(visited, node)
 
-      succs =
-        case Graph.out_neighbors(graph, node) do
-          nil -> []
-          neighbors -> neighbors
-        end
+      succs = Graph.out_neighbors(graph, node)
 
       {visited, acc} =
         Enum.reduce(succs, {visited, acc}, fn succ, {v, a} ->
@@ -188,9 +184,6 @@ defmodule ExPDG.Dominator do
   end
 
   defp predecessors(graph, node) do
-    case Graph.in_neighbors(graph, node) do
-      nil -> []
-      preds -> preds
-    end
+    Graph.in_neighbors(graph, node)
   end
 end

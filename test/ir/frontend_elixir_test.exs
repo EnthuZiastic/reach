@@ -74,7 +74,9 @@ defmodule ExPDG.Frontend.ElixirTest do
 
     test "remote call" do
       [node] = IR.from_string!("Enum.map(list, fun)")
-      assert %Node{type: :call, meta: %{module: Enum, function: :map, arity: 2, kind: :remote}} = node
+
+      assert %Node{type: :call, meta: %{module: Enum, function: :map, arity: 2, kind: :remote}} =
+               node
     end
 
     test "zero-arity call" do
@@ -106,13 +108,14 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "if/unless desugaring" do
     test "if desugars to case with two branches" do
-      [node] = IR.from_string!("""
-      if x do
-        1
-      else
-        2
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        if x do
+          1
+        else
+          2
+        end
+        """)
 
       assert %Node{type: :case, meta: %{desugared_from: :if}} = node
       [condition, true_clause, false_clause] = node.children
@@ -122,13 +125,14 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
 
     test "unless desugars with swapped branches" do
-      [node] = IR.from_string!("""
-      unless x do
-        1
-      else
-        2
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        unless x do
+          1
+        else
+          2
+        end
+        """)
 
       assert %Node{type: :case, meta: %{desugared_from: :unless}} = node
       [_cond, true_clause, false_clause] = node.children
@@ -140,13 +144,14 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "case" do
     test "case with multiple clauses" do
-      [node] = IR.from_string!("""
-      case x do
-        :ok -> 1
-        :error -> 2
-        _ -> 3
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        case x do
+          :ok -> 1
+          :error -> 2
+          _ -> 3
+        end
+        """)
 
       assert %Node{type: :case} = node
       [expr | clauses] = node.children
@@ -159,12 +164,13 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
 
     test "case clause indices" do
-      [node] = IR.from_string!("""
-      case x do
-        1 -> :a
-        2 -> :b
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        case x do
+          1 -> :a
+          2 -> :b
+        end
+        """)
 
       [_expr | clauses] = node.children
       assert [%{meta: %{index: 0}}, %{meta: %{index: 1}}] = clauses
@@ -173,12 +179,13 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "cond" do
     test "cond desugars to case" do
-      [node] = IR.from_string!("""
-      cond do
-        x > 0 -> :positive
-        true -> :non_positive
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        cond do
+          x > 0 -> :positive
+          true -> :non_positive
+        end
+        """)
 
       assert %Node{type: :case, meta: %{desugared_from: :cond}} = node
       assert length(node.children) == 2
@@ -187,11 +194,12 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "function definitions" do
     test "simple def" do
-      [node] = IR.from_string!("""
-      def foo(x) do
-        x + 1
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        def foo(x) do
+          x + 1
+        end
+        """)
 
       assert %Node{type: :function_def, meta: %{name: :foo, arity: 1, kind: :def}} = node
       [clause] = node.children
@@ -199,11 +207,12 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
 
     test "def with guards" do
-      [node] = IR.from_string!("""
-      def foo(x) when is_integer(x) do
-        x + 1
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        def foo(x) when is_integer(x) do
+          x + 1
+        end
+        """)
 
       assert %Node{type: :function_def} = node
       [clause] = node.children
@@ -212,9 +221,10 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
 
     test "defp" do
-      [node] = IR.from_string!("""
-      defp bar(x), do: x
-      """)
+      [node] =
+        IR.from_string!("""
+        defp bar(x), do: x
+        """)
 
       assert %Node{type: :function_def, meta: %{kind: :defp}} = node
     end
@@ -222,13 +232,14 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "try" do
     test "try/rescue" do
-      [node] = IR.from_string!("""
-      try do
-        risky()
-      rescue
-        e in RuntimeError -> handle(e)
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        try do
+          risky()
+        rescue
+          e in RuntimeError -> handle(e)
+        end
+        """)
 
       assert %Node{type: :try} = node
       rescue_nodes = Enum.filter(node.children, &(&1.type == :rescue))
@@ -238,13 +249,14 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "receive" do
     test "receive with timeout" do
-      [node] = IR.from_string!("""
-      receive do
-        {:msg, data} -> data
-      after
-        5000 -> :timeout
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        receive do
+          {:msg, data} -> data
+        after
+          5000 -> :timeout
+        end
+        """)
 
       assert %Node{type: :receive} = node
       clauses = node.children
@@ -265,12 +277,13 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
 
     test "fn with multiple clauses" do
-      [node] = IR.from_string!("""
-      fn
-        :ok -> 1
-        :error -> 2
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        fn
+          :ok -> 1
+          :error -> 2
+        end
+        """)
 
       assert %Node{type: :fn} = node
       assert length(node.children) == 2
@@ -279,11 +292,12 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "for comprehension" do
     test "simple for" do
-      [node] = IR.from_string!("""
-      for x <- list do
-        x * 2
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        for x <- list do
+          x * 2
+        end
+        """)
 
       assert %Node{type: :comprehension} = node
       generators = Enum.filter(node.children, &(&1.type == :generator))
@@ -291,11 +305,12 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
 
     test "for with filter" do
-      [node] = IR.from_string!("""
-      for x <- list, x > 0 do
-        x
-      end
-      """)
+      [node] =
+        IR.from_string!("""
+        for x <- list, x > 0 do
+          x
+        end
+        """)
 
       assert %Node{type: :comprehension} = node
       filters = Enum.filter(node.children, &(&1.type == :filter))
@@ -369,13 +384,14 @@ defmodule ExPDG.Frontend.ElixirTest do
 
   describe "block" do
     test "multi-expression block" do
-      [node] = IR.from_string!("""
-      (
-        x = 1
-        y = 2
-        x + y
-      )
-      """)
+      [node] =
+        IR.from_string!("""
+        (
+          x = 1
+          y = 2
+          x + y
+        )
+        """)
 
       assert %Node{type: :block} = node
       assert length(node.children) == 3
@@ -415,16 +431,17 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
 
     test "unique IDs across all nodes" do
-      nodes = IR.from_string!("""
-      def foo(x, y) do
-        z = x + y
-        if z > 0 do
-          z
-        else
-          -z
+      nodes =
+        IR.from_string!("""
+        def foo(x, y) do
+          z = x + y
+          if z > 0 do
+            z
+          else
+            -z
+          end
         end
-      end
-      """)
+        """)
 
       all = IR.all_nodes(nodes)
       ids = Enum.map(all, & &1.id)

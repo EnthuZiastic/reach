@@ -37,15 +37,17 @@ defmodule ExPDG.Checks.TaintFlow do
 
     all = nodes(graph)
 
-    sources = Enum.filter(all, fn node ->
-      node.type == :call and
-        {node.meta[:module], node.meta[:function]} in @taint_sources
-    end)
+    sources =
+      Enum.filter(all, fn node ->
+        node.type == :call and
+          {node.meta[:module], node.meta[:function]} in @taint_sources
+      end)
 
-    sinks = Enum.filter(all, fn node ->
-      node.type == :call and
-        {node.meta[:module], node.meta[:function]} in @dangerous_sinks
-    end)
+    sinks =
+      Enum.filter(all, fn node ->
+        node.type == :call and
+          {node.meta[:module], node.meta[:function]} in @dangerous_sinks
+      end)
 
     for source <- sources,
         sink <- sinks,

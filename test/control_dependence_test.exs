@@ -1,7 +1,7 @@
 defmodule ExPDG.ControlDependenceTest do
   use ExUnit.Case, async: true
 
-  alias ExPDG.{IR, ControlFlow, ControlDependence}
+  alias ExPDG.{ControlDependence, ControlFlow, IR}
 
   defp build_control_deps(source) do
     [func_def] = IR.from_string!(source)
@@ -10,7 +10,6 @@ defmodule ExPDG.ControlDependenceTest do
     {func_def, control_flow, control_deps}
   end
 
-
   defp has_control_edge?(control_deps, from, to) do
     Graph.edges(control_deps)
     |> Enum.any?(fn e -> e.v1 == from and e.v2 == to end)
@@ -18,35 +17,39 @@ defmodule ExPDG.ControlDependenceTest do
 
   describe "basic control dependence" do
     test "if/else: both branches control-dependent on condition" do
-      {_func, _control_flow, control_deps} = build_control_deps("""
-      def foo(x) do
-        if x > 0 do
-          :positive
-        else
-          :negative
+      {_func, _control_flow, control_deps} =
+        build_control_deps("""
+        def foo(x) do
+          if x > 0 do
+            :positive
+          else
+            :negative
+          end
         end
-      end
-      """)
+        """)
 
       # The CDG should have control dependence edges
       edges = Graph.edges(control_deps)
-      control_edges = Enum.filter(edges, fn e ->
-        match?({:control, _}, e.label)
-      end)
 
-      assert length(control_edges) > 0
+      control_edges =
+        Enum.filter(edges, fn e ->
+          match?({:control, _}, e.label)
+        end)
+
+      assert control_edges != []
     end
 
     test "contains all control flow vertices" do
-      {_func, control_flow, control_deps} = build_control_deps("""
-      def foo(x) do
-        if x > 0 do
-          :positive
-        else
-          :negative
+      {_func, control_flow, control_deps} =
+        build_control_deps("""
+        def foo(x) do
+          if x > 0 do
+            :positive
+          else
+            :negative
+          end
         end
-      end
-      """)
+        """)
 
       cfg_vertices = Graph.vertices(control_flow) |> MapSet.new()
       cdg_vertices = Graph.vertices(control_deps) |> MapSet.new()
@@ -55,19 +58,22 @@ defmodule ExPDG.ControlDependenceTest do
     end
 
     test "straight-line code: no control dependence edges" do
-      {_func, _control_flow, control_deps} = build_control_deps("""
-      def foo(x) do
-        a = x + 1
-        b = a + 2
-        b
-      end
-      """)
+      {_func, _control_flow, control_deps} =
+        build_control_deps("""
+        def foo(x) do
+          a = x + 1
+          b = a + 2
+          b
+        end
+        """)
 
       # In straight-line code, every node post-dominates its predecessor,
       # so there are no control dependence edges
-      control_edges = Graph.edges(control_deps) |> Enum.filter(fn e ->
-        match?({:control, _}, e.label)
-      end)
+      control_edges =
+        Graph.edges(control_deps)
+        |> Enum.filter(fn e ->
+          match?({:control, _}, e.label)
+        end)
 
       assert control_edges == []
     end
@@ -139,9 +145,11 @@ defmodule ExPDG.ControlDependenceTest do
 
       # No control dependence edges expected for linear code
       # (each node is post-dominated by its successor)
-      control_edges = Graph.edges(control_deps) |> Enum.filter(fn e ->
-        match?({:control, _}, e.label)
-      end)
+      control_edges =
+        Graph.edges(control_deps)
+        |> Enum.filter(fn e ->
+          match?({:control, _}, e.label)
+        end)
 
       # In linear code, the only control dependence should be on :entry
       # (all nodes always execute if entry is reached)

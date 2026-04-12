@@ -36,14 +36,14 @@ defmodule ExPDG.ControlDependence do
       b = edge.v2
       edge_label = edge.label
 
-      if not Dominator.dominates?(ipdom, b, a) do
+      if Dominator.dominates?(ipdom, b, a) do
+        cdg_acc
+      else
         # Ferrante et al.: walk up post-dominator tree from B,
         # stopping at ipdom(A) exclusive. Mark each visited node
         # as control-dependent on A.
         target = Map.get(ipdom, a, a)
         add_control_deps(cdg_acc, a, b, target, ipdom, edge_label)
-      else
-        cdg_acc
       end
     end)
   end

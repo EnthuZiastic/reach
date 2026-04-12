@@ -27,7 +27,8 @@ defmodule ExPDG.Checks.DeepDependencyChain do
         check: :deep_dependency_chain,
         severity: :info,
         category: :complexity,
-        message: "Expression depends on #{length(slice)} other expressions (threshold: #{threshold})",
+        message:
+          "Expression depends on #{length(slice)} other expressions (threshold: #{threshold})",
         location: node.source_span,
         node_id: node.id,
         meta: %{slice_size: length(slice), threshold: threshold}

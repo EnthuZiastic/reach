@@ -185,7 +185,9 @@ defmodule ExPDG.ControlFlow do
         {g, exits ++ clause_exits}
       end)
 
-    all_exits = body_exits ++ rescue_exits ++ catch_exits ++ else_clause_exits(graph, else_clauses, body_exits)
+    all_exits =
+      body_exits ++
+        rescue_exits ++ catch_exits ++ else_clause_exits(graph, else_clauses, body_exits)
 
     # Build after (connects from all paths)
     case after_node do
@@ -209,10 +211,11 @@ defmodule ExPDG.ControlFlow do
     graph = Graph.add_vertex(graph, node.id)
     graph = Graph.add_edge(graph, from, node.id, label: :sequential)
 
-    {clauses, timeout} = Enum.split_with(children, fn
-      %Node{meta: %{kind: :timeout_clause}} -> false
-      _ -> true
-    end)
+    {clauses, timeout} =
+      Enum.split_with(children, fn
+        %Node{meta: %{kind: :timeout_clause}} -> false
+        _ -> true
+      end)
 
     # Build match clauses
     {graph, clause_exits} =
@@ -262,7 +265,7 @@ defmodule ExPDG.ControlFlow do
 
   # --- Helpers ---
 
-  defp last_exit([]), do: raise "no exits"
+  defp last_exit([]), do: raise("no exits")
   defp last_exit(exits), do: List.last(exits)
 
   defp build_sequential(graph, nodes, from) do
@@ -288,15 +291,17 @@ defmodule ExPDG.ControlFlow do
   end
 
   defp split_clause_children(children) do
-    {params, rest} = Enum.split_while(children, fn
-      %Node{type: :guard} -> false
-      _ -> true
-    end)
+    {params, rest} =
+      Enum.split_while(children, fn
+        %Node{type: :guard} -> false
+        _ -> true
+      end)
 
-    {guards, body} = Enum.split_while(rest, fn
-      %Node{type: :guard} -> true
-      _ -> false
-    end)
+    {guards, body} =
+      Enum.split_while(rest, fn
+        %Node{type: :guard} -> true
+        _ -> false
+      end)
 
     # If there are no explicit body nodes after guards, treat last param as body
     # (single-expression function clause)
@@ -311,20 +316,22 @@ defmodule ExPDG.ControlFlow do
   end
 
   defp split_try_children(children) do
-    body = Enum.find(children, fn
-      %Node{type: t} when t in [:rescue, :catch_clause, :after, :clause] -> false
-      _ -> true
-    end)
+    body =
+      Enum.find(children, fn
+        %Node{type: t} when t in [:rescue, :catch_clause, :after, :clause] -> false
+        _ -> true
+      end)
 
     rescue_clauses = Enum.filter(children, &(&1.type == :rescue))
     catch_clauses = Enum.filter(children, &(&1.type == :catch_clause))
 
     after_node = Enum.find(children, &(&1.type == :after))
 
-    else_clauses = Enum.filter(children, fn
-      %Node{type: :clause} -> true
-      _ -> false
-    end)
+    else_clauses =
+      Enum.filter(children, fn
+        %Node{type: :clause} -> true
+        _ -> false
+      end)
 
     {body, rescue_clauses, catch_clauses, after_node, else_clauses}
   end

@@ -8,7 +8,11 @@ defmodule ExPDG.MixProject do
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      dialyzer: [plt_add_apps: [:mix]],
+      aliases: aliases(),
+      dialyzer: [
+        plt_file: {:no_warn, "_build/dev/dialyxir_plt.plt"},
+        plt_add_apps: [:mix]
+      ],
       name: "ExPDG",
       description: "Program Dependence Graph for BEAM languages"
     ]
@@ -17,6 +21,22 @@ defmodule ExPDG.MixProject do
   def application do
     [
       extra_applications: [:logger]
+    ]
+  end
+
+  def cli do
+    [preferred_envs: [ci: :test]]
+  end
+
+  defp aliases do
+    [
+      ci: [
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "credo --strict",
+        "dialyzer",
+        "test"
+      ]
     ]
   end
 

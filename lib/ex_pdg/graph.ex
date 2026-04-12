@@ -6,7 +6,7 @@ defmodule ExPDG.Graph do
   Provides slicing and independence queries.
   """
 
-  alias ExPDG.{IR, ControlFlow, ControlDependence, DataDependence, Effects}
+  alias ExPDG.{ControlDependence, ControlFlow, DataDependence, Effects, IR}
   alias ExPDG.IR.Node
 
   @type t :: %__MODULE__{

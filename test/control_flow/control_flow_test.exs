@@ -1,7 +1,7 @@
 defmodule ExPDG.ControlFlowTest do
   use ExUnit.Case, async: true
 
-  alias ExPDG.{IR, ControlFlow}
+  alias ExPDG.{ControlFlow, IR}
   alias ExPDG.IR.Node
 
   defp build_control_flow(source) do
@@ -14,7 +14,6 @@ defmodule ExPDG.ControlFlowTest do
   defp vertex_ids(cfg) do
     Graph.vertices(cfg) |> MapSet.new()
   end
-
 
   defp has_path?(cfg, from, to) do
     Graph.get_shortest_path(cfg, from, to) != nil
@@ -36,13 +35,14 @@ defmodule ExPDG.ControlFlowTest do
 
   describe "straight-line code" do
     test "has linear control flow" do
-      {_func, cfg} = build_control_flow("""
-      def foo(x) do
-        a = x + 1
-        b = a + 2
-        b
-      end
-      """)
+      {_func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          a = x + 1
+          b = a + 2
+          b
+        end
+        """)
 
       assert has_path?(cfg, :entry, :exit)
 
@@ -60,24 +60,27 @@ defmodule ExPDG.ControlFlowTest do
 
   describe "if/else (desugared to case)" do
     test "creates diamond control flow" do
-      {_func, cfg} = build_control_flow("""
-      def foo(x) do
-        if x > 0 do
-          :positive
-        else
-          :negative
+      {_func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          if x > 0 do
+            :positive
+          else
+            :negative
+          end
         end
-      end
-      """)
+        """)
 
       assert has_path?(cfg, :entry, :exit)
 
       # Both branches should reach exit
       vertices = Graph.vertices(cfg)
-      clause_vertices = Enum.filter(vertices, fn
-        v when is_integer(v) -> true
-        _ -> false
-      end)
+
+      clause_vertices =
+        Enum.filter(vertices, fn
+          v when is_integer(v) -> true
+          _ -> false
+        end)
 
       Enum.each(clause_vertices, fn v ->
         assert has_path?(cfg, v, :exit), "vertex #{v} doesn't reach :exit"
@@ -87,15 +90,16 @@ defmodule ExPDG.ControlFlowTest do
 
   describe "case with multiple clauses" do
     test "creates branching control flow" do
-      {_func, cfg} = build_control_flow("""
-      def foo(x) do
-        case x do
-          :a -> 1
-          :b -> 2
-          _ -> 3
+      {_func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          case x do
+            :a -> 1
+            :b -> 2
+            _ -> 3
+          end
         end
-      end
-      """)
+        """)
 
       assert has_path?(cfg, :entry, :exit)
 
@@ -104,26 +108,28 @@ defmodule ExPDG.ControlFlowTest do
         Graph.edges(cfg)
         |> Enum.map(& &1.label)
 
-      clause_matches = Enum.filter(all_labels, fn
-        {:clause_match, _} -> true
-        _ -> false
-      end)
+      clause_matches =
+        Enum.filter(all_labels, fn
+          {:clause_match, _} -> true
+          _ -> false
+        end)
 
-      assert length(clause_matches) >= 3
+      assert Enum.count(clause_matches) >= 3
     end
   end
 
   describe "try/catch" do
     test "creates normal and exception paths" do
-      {_func, cfg} = build_control_flow("""
-      def foo(x) do
-        try do
-          risky(x)
-        rescue
-          e in RuntimeError -> handle(e)
+      {_func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          try do
+            risky(x)
+          rescue
+            e in RuntimeError -> handle(e)
+          end
         end
-      end
-      """)
+        """)
 
       assert has_path?(cfg, :entry, :exit)
 
@@ -135,17 +141,18 @@ defmodule ExPDG.ControlFlowTest do
     end
 
     test "try/after connects after block from all paths" do
-      {_func, cfg} = build_control_flow("""
-      def foo(x) do
-        try do
-          risky(x)
-        rescue
-          _ -> :error
-        after
-          cleanup()
+      {_func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          try do
+            risky(x)
+          rescue
+            _ -> :error
+          after
+            cleanup()
+          end
         end
-      end
-      """)
+        """)
 
       assert has_path?(cfg, :entry, :exit)
 
@@ -159,15 +166,16 @@ defmodule ExPDG.ControlFlowTest do
 
   describe "receive" do
     test "with timeout creates timeout branch" do
-      {_func, cfg} = build_control_flow("""
-      def foo do
-        receive do
-          {:msg, data} -> data
-        after
-          5000 -> :timeout
+      {_func, cfg} =
+        build_control_flow("""
+        def foo do
+          receive do
+            {:msg, data} -> data
+          after
+            5000 -> :timeout
+          end
         end
-      end
-      """)
+        """)
 
       assert has_path?(cfg, :entry, :exit)
 
@@ -181,11 +189,12 @@ defmodule ExPDG.ControlFlowTest do
 
   describe "guards" do
     test "guard creates guard_success edge" do
-      {_func, cfg} = build_control_flow("""
-      def foo(x) when is_integer(x) do
-        x + 1
-      end
-      """)
+      {_func, cfg} =
+        build_control_flow("""
+        def foo(x) when is_integer(x) do
+          x + 1
+        end
+        """)
 
       all_labels =
         Graph.edges(cfg)
@@ -197,27 +206,29 @@ defmodule ExPDG.ControlFlowTest do
 
   describe "multi-clause function" do
     test "creates dispatch control flow" do
-      nodes = IR.from_string!("""
-      defmodule M do
-        def foo(:a), do: 1
-        def foo(:b), do: 2
-        def foo(_), do: 3
-      end
-      """)
+      nodes =
+        IR.from_string!("""
+        defmodule M do
+          def foo(:a), do: 1
+          def foo(:b), do: 2
+          def foo(_), do: 3
+        end
+        """)
 
       # Find all function defs
       func_defs = IR.find_by_type(nodes, :function_def)
-      assert length(func_defs) >= 1
+      assert func_defs != []
     end
   end
 
   describe "pipe chain" do
     test "is sequential after desugaring" do
-      {_func, cfg} = build_control_flow("""
-      def foo(x) do
-        x |> bar() |> baz()
-      end
-      """)
+      {_func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          x |> bar() |> baz()
+        end
+        """)
 
       assert has_path?(cfg, :entry, :exit)
 

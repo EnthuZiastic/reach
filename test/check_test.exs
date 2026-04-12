@@ -1,7 +1,7 @@
 defmodule ExPDG.CheckTest do
   use ExUnit.Case, async: true
 
-  alias ExPDG.{IR, Graph, Diagnostic}
+  alias ExPDG.{Diagnostic, Graph, IR}
 
   defp build_graph(source) do
     nodes = IR.from_string!(source)
@@ -10,15 +10,17 @@ defmodule ExPDG.CheckTest do
 
   describe "Check behaviour" do
     test "UselessExpression runs without errors" do
-      graph = build_graph("""
-      def foo(x) do
-        y = x + 1
-        y
-      end
-      """)
+      graph =
+        build_graph("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
 
       diagnostics = ExPDG.Checks.UselessExpression.run(graph, [])
       assert is_list(diagnostics)
+
       Enum.each(diagnostics, fn d ->
         assert %Diagnostic{} = d
         assert d.check == :useless_expression
@@ -26,23 +28,25 @@ defmodule ExPDG.CheckTest do
     end
 
     test "UnusedDefinition runs without errors" do
-      graph = build_graph("""
-      def foo(x) do
-        y = x + 1
-        y
-      end
-      """)
+      graph =
+        build_graph("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
 
       diagnostics = ExPDG.Checks.UnusedDefinition.run(graph, [])
       assert is_list(diagnostics)
     end
 
     test "TaintFlow runs without errors" do
-      graph = build_graph("""
-      def foo(x) do
-        x + 1
-      end
-      """)
+      graph =
+        build_graph("""
+        def foo(x) do
+          x + 1
+        end
+        """)
 
       diagnostics = ExPDG.Checks.TaintFlow.run(graph, [])
       assert is_list(diagnostics)
@@ -50,22 +54,24 @@ defmodule ExPDG.CheckTest do
     end
 
     test "DeepDependencyChain runs without errors" do
-      graph = build_graph("""
-      def foo(x) do
-        x + 1
-      end
-      """)
+      graph =
+        build_graph("""
+        def foo(x) do
+          x + 1
+        end
+        """)
 
       diagnostics = ExPDG.Checks.DeepDependencyChain.run(graph, [])
       assert is_list(diagnostics)
     end
 
     test "run_checks combines multiple checks" do
-      graph = build_graph("""
-      def foo(x) do
-        x + 1
-      end
-      """)
+      graph =
+        build_graph("""
+        def foo(x) do
+          x + 1
+        end
+        """)
 
       checks = [
         ExPDG.Checks.UselessExpression,
@@ -93,16 +99,18 @@ defmodule ExPDG.CheckTest do
     end
 
     test "macro-defined check finds literals" do
-      graph = build_graph("""
-      def foo do
-        42
-      end
-      """)
+      graph =
+        build_graph("""
+        def foo do
+          42
+        end
+        """)
 
       diagnostics = SampleCheck.run(graph, [])
       assert is_list(diagnostics)
 
       literal_diagnostics = Enum.filter(diagnostics, &(&1.check == :sample_check))
+
       Enum.each(literal_diagnostics, fn d ->
         assert d.severity == :info
         assert d.category == :test
@@ -112,12 +120,13 @@ defmodule ExPDG.CheckTest do
 
   describe "diagnostic metadata" do
     test "includes location information" do
-      graph = build_graph("""
-      def foo(x) do
-        y = x + 1
-        y
-      end
-      """)
+      graph =
+        build_graph("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
 
       diagnostics = ExPDG.Checks.UselessExpression.run(graph, [])
 

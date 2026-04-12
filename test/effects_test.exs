@@ -1,7 +1,7 @@
 defmodule ExPDG.EffectsTest do
   use ExUnit.Case, async: true
 
-  alias ExPDG.{IR, Effects}
+  alias ExPDG.{Effects, IR}
 
   defp node_for(source) do
     [node] = IR.from_string!(source)
