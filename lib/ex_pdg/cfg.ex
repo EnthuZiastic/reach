@@ -1,0 +1,344 @@
+defmodule ExPDG.CFG do
+  @moduledoc """
+  Control Flow Graph builder.
+
+  Constructs a CFG from IR nodes where:
+  - Vertices are IR node IDs (plus synthetic :entry and :exit)
+  - Edges represent control flow transitions with labeled types
+  """
+
+  alias ExPDG.IR.Node
+
+  @type vertex :: Node.id() | :entry | :exit
+  @type edge_label ::
+          :sequential
+          | :true_branch
+          | :false_branch
+          | {:clause_match, non_neg_integer()}
+          | {:clause_fail, non_neg_integer()}
+          | :guard_success
+          | :guard_fail
+          | :exception
+          | :catch_entry
+          | :after_entry
+          | :timeout
+          | :return
+
+  @doc """
+  Builds a CFG from a function definition IR node.
+
+  Returns a `Graph.t()` with `:entry` and `:exit` as synthetic nodes.
+  """
+  @spec build(Node.t()) :: Graph.t()
+  def build(%Node{type: :function_def} = node) do
+    graph =
+      Graph.new()
+      |> Graph.add_vertex(:entry)
+      |> Graph.add_vertex(:exit)
+
+    clauses = node.children
+
+    case clauses do
+      [] ->
+        Graph.add_edge(graph, :entry, :exit, label: :return)
+
+      [single_clause] ->
+        {graph, exits} = build_clause(graph, single_clause, :entry)
+        connect_to_exit(graph, exits)
+
+      multiple ->
+        build_dispatch(graph, multiple)
+    end
+  end
+
+  def build(%Node{type: :clause} = node) do
+    graph =
+      Graph.new()
+      |> Graph.add_vertex(:entry)
+      |> Graph.add_vertex(:exit)
+
+    {graph, exits} = build_node(graph, node, :entry)
+    connect_to_exit(graph, exits)
+  end
+
+  @doc """
+  Exports the CFG to DOT format for visualization.
+  """
+  @spec to_dot(Graph.t()) :: {:ok, String.t()} | {:error, term()}
+  defdelegate to_dot(graph), to: Graph
+
+  # --- Internal builders ---
+
+  # Dispatch for multi-clause functions
+  defp build_dispatch(graph, clauses) do
+    dispatch_id = :dispatch
+
+    graph = Graph.add_vertex(graph, dispatch_id)
+    graph = Graph.add_edge(graph, :entry, dispatch_id, label: :sequential)
+
+    {graph, _prev_fail} =
+      Enum.with_index(clauses)
+      |> Enum.reduce({graph, dispatch_id}, fn {clause, index}, {g, from} ->
+        {g, clause_exits} = build_clause(g, clause, from, index)
+        g = connect_to_exit(g, clause_exits)
+
+        fail_node = {:clause_fail, index}
+        g = Graph.add_vertex(g, fail_node)
+        g = Graph.add_edge(g, from, fail_node, label: {:clause_fail, index})
+
+        {g, fail_node}
+      end)
+
+    graph
+  end
+
+  defp build_clause(graph, %Node{type: :clause} = clause, from, index \\ 0) do
+    children = clause.children
+
+    {params, guards, body_nodes} = split_clause_children(children)
+
+    graph = Graph.add_vertex(graph, clause.id)
+    graph = Graph.add_edge(graph, from, clause.id, label: {:clause_match, index})
+
+    # Build params (sequential)
+    {graph, param_exits} = build_sequential(graph, params, clause.id)
+    current = last_exit(param_exits)
+
+    # Build guards
+    {graph, current} = build_guards(graph, guards, current)
+
+    # Build body
+    build_sequential(graph, body_nodes, current)
+  end
+
+  defp build_node(graph, %Node{type: :block, children: children}, from) do
+    build_sequential(graph, children, from)
+  end
+
+  defp build_node(graph, %Node{type: :case, children: [condition | clauses]} = node, from) do
+    graph = Graph.add_vertex(graph, node.id)
+    graph = Graph.add_edge(graph, from, node.id, label: :sequential)
+
+    # Build condition
+    graph = Graph.add_vertex(graph, condition.id)
+    graph = Graph.add_edge(graph, node.id, condition.id, label: :sequential)
+
+    # Build each clause
+    all_exits =
+      clauses
+      |> Enum.with_index()
+      |> Enum.reduce({graph, []}, fn {clause, index}, {g, exits} ->
+        {g, clause_exits} = build_clause(g, clause, condition.id, index)
+        {g, exits ++ clause_exits}
+      end)
+
+    {graph, exits} = all_exits
+    {graph, exits}
+  end
+
+  defp build_node(graph, %Node{type: :case, children: clauses} = node, from)
+       when is_list(clauses) do
+    graph = Graph.add_vertex(graph, node.id)
+    graph = Graph.add_edge(graph, from, node.id, label: :sequential)
+
+    all_exits =
+      clauses
+      |> Enum.with_index()
+      |> Enum.reduce({graph, []}, fn {clause, index}, {g, exits} ->
+        {g, clause_exits} = build_clause(g, clause, node.id, index)
+        {g, exits ++ clause_exits}
+      end)
+
+    {graph, exits} = all_exits
+    {graph, exits}
+  end
+
+  defp build_node(graph, %Node{type: :try, children: children} = node, from) do
+    graph = Graph.add_vertex(graph, node.id)
+    graph = Graph.add_edge(graph, from, node.id, label: :sequential)
+
+    # Split children into body, rescue, catch, after, else
+    {body, rescue_clauses, catch_clauses, after_node, else_clauses} = split_try_children(children)
+
+    # Build body
+    {graph, body_exits} =
+      case body do
+        nil -> {graph, [node.id]}
+        body_node -> build_node(graph, body_node, node.id)
+      end
+
+    # Build rescue clauses (connected from body via exception edges)
+    {graph, rescue_exits} =
+      Enum.reduce(rescue_clauses, {graph, []}, fn rescue_node, {g, exits} ->
+        g = Graph.add_vertex(g, rescue_node.id)
+        g = Graph.add_edge(g, node.id, rescue_node.id, label: :exception)
+        {g, clause_exits} = build_sequential(g, rescue_node.children, rescue_node.id)
+        {g, exits ++ clause_exits}
+      end)
+
+    # Build catch clauses
+    {graph, catch_exits} =
+      Enum.reduce(catch_clauses, {graph, []}, fn catch_node, {g, exits} ->
+        g = Graph.add_vertex(g, catch_node.id)
+        g = Graph.add_edge(g, node.id, catch_node.id, label: :exception)
+        {g, clause_exits} = build_sequential(g, catch_node.children, catch_node.id)
+        {g, exits ++ clause_exits}
+      end)
+
+    all_exits = body_exits ++ rescue_exits ++ catch_exits ++ else_clause_exits(graph, else_clauses, body_exits)
+
+    # Build after (connects from all paths)
+    case after_node do
+      nil ->
+        {graph, all_exits}
+
+      %Node{} = after_n ->
+        graph = Graph.add_vertex(graph, after_n.id)
+
+        graph =
+          Enum.reduce(all_exits, graph, fn exit_node, g ->
+            Graph.add_edge(g, exit_node, after_n.id, label: :after_entry)
+          end)
+
+        {graph, after_exits} = build_sequential(graph, after_n.children, after_n.id)
+        {graph, after_exits}
+    end
+  end
+
+  defp build_node(graph, %Node{type: :receive, children: children} = node, from) do
+    graph = Graph.add_vertex(graph, node.id)
+    graph = Graph.add_edge(graph, from, node.id, label: :sequential)
+
+    {clauses, timeout} = Enum.split_with(children, fn
+      %Node{meta: %{kind: :timeout_clause}} -> false
+      _ -> true
+    end)
+
+    # Build match clauses
+    {graph, clause_exits} =
+      clauses
+      |> Enum.with_index()
+      |> Enum.reduce({graph, []}, fn {clause, index}, {g, exits} ->
+        {g, c_exits} = build_clause(g, clause, node.id, index)
+        {g, exits ++ c_exits}
+      end)
+
+    # Build timeout clause
+    {graph, timeout_exits} =
+      case timeout do
+        [] ->
+          {graph, []}
+
+        [timeout_clause] ->
+          graph = Graph.add_vertex(graph, timeout_clause.id)
+          graph = Graph.add_edge(graph, node.id, timeout_clause.id, label: :timeout)
+          build_sequential(graph, timeout_clause.children, timeout_clause.id)
+      end
+
+    {graph, clause_exits ++ timeout_exits}
+  end
+
+  defp build_node(graph, %Node{type: :comprehension, children: children} = node, from) do
+    graph = Graph.add_vertex(graph, node.id)
+    graph = Graph.add_edge(graph, from, node.id, label: :sequential)
+
+    # Generators and filters are sequential, body loops back
+    build_sequential(graph, children, node.id)
+  end
+
+  defp build_node(graph, %Node{type: :fn} = node, from) do
+    # Anonymous functions: the fn node itself is the value, clauses are separate CFGs
+    graph = Graph.add_vertex(graph, node.id)
+    graph = Graph.add_edge(graph, from, node.id, label: :sequential)
+    {graph, [node.id]}
+  end
+
+  # Leaf/simple nodes
+  defp build_node(graph, %Node{} = node, from) do
+    graph = Graph.add_vertex(graph, node.id)
+    graph = Graph.add_edge(graph, from, node.id, label: :sequential)
+    {graph, [node.id]}
+  end
+
+  # --- Helpers ---
+
+  defp last_exit([]), do: raise "no exits"
+  defp last_exit(exits), do: List.last(exits)
+
+  defp build_sequential(graph, nodes, from) do
+    Enum.reduce(nodes, {graph, [from]}, fn node, {g, [current | _]} ->
+      build_node(g, node, current)
+    end)
+  end
+
+  defp build_guards(graph, [], current), do: {graph, current}
+
+  defp build_guards(graph, guards, current) do
+    Enum.reduce(guards, {graph, current}, fn guard, {g, prev} ->
+      g = Graph.add_vertex(g, guard.id)
+      g = Graph.add_edge(g, prev, guard.id, label: :guard_success)
+      {g, guard.id}
+    end)
+  end
+
+  defp connect_to_exit(graph, exits) do
+    Enum.reduce(exits, graph, fn exit_node, g ->
+      Graph.add_edge(g, exit_node, :exit, label: :return)
+    end)
+  end
+
+  defp split_clause_children(children) do
+    {params, rest} = Enum.split_while(children, fn
+      %Node{type: :guard} -> false
+      _ -> true
+    end)
+
+    {guards, body} = Enum.split_while(rest, fn
+      %Node{type: :guard} -> true
+      _ -> false
+    end)
+
+    # If there are no explicit body nodes after guards, treat last param as body
+    # (single-expression function clause)
+    case body do
+      [] when params != [] ->
+        {init, [last]} = Enum.split(params, -1)
+        {init, guards, [last]}
+
+      _ ->
+        {params, guards, body}
+    end
+  end
+
+  defp split_try_children(children) do
+    body = Enum.find(children, fn
+      %Node{type: t} when t in [:rescue, :catch_clause, :after, :clause] -> false
+      _ -> true
+    end)
+
+    rescue_clauses = Enum.filter(children, &(&1.type == :rescue))
+    catch_clauses = Enum.filter(children, &(&1.type == :catch_clause))
+
+    after_node = Enum.find(children, &(&1.type == :after))
+
+    else_clauses = Enum.filter(children, fn
+      %Node{type: :clause} -> true
+      _ -> false
+    end)
+
+    {body, rescue_clauses, catch_clauses, after_node, else_clauses}
+  end
+
+  defp else_clause_exits(_graph, [], _body_exits), do: []
+
+  defp else_clause_exits(graph, else_clauses, body_exits) do
+    # else clauses in try are handled after body succeeds
+    {_graph, exits} =
+      Enum.reduce(else_clauses, {graph, []}, fn clause, {g, exits} ->
+        {g, c_exits} = build_sequential(g, clause.children, List.first(body_exits))
+        {g, exits ++ c_exits}
+      end)
+
+    exits
+  end
+end

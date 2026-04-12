@@ -1,0 +1,798 @@
+defmodule ExPDG.Frontend.Elixir do
+  @moduledoc """
+  Translates Elixir AST into ExPDG IR nodes.
+
+  Parses Elixir source via `Code.string_to_quoted/2` and normalizes
+  the AST into expression-level IR nodes.
+  """
+
+  alias ExPDG.IR.{Node, Counter}
+
+  @doc """
+  Parses an Elixir source string and returns the IR.
+  """
+  @spec parse(String.t(), keyword()) :: {:ok, [Node.t()]} | {:error, term()}
+  def parse(source, opts \\ []) do
+    file = Keyword.get(opts, :file, "nofile")
+
+    case Code.string_to_quoted(source,
+           columns: true,
+           token_metadata: true,
+           file: file
+         ) do
+      {:ok, ast} ->
+        {:ok, counter} = Counter.start_link()
+
+        try do
+          nodes = translate(ast, counter, file)
+          {:ok, List.wrap(nodes)}
+        after
+          Counter.stop(counter)
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  @doc """
+  Same as `parse/2` but raises on error.
+  """
+  @spec parse!(String.t(), keyword()) :: [Node.t()]
+  def parse!(source, opts \\ []) do
+    case parse(source, opts) do
+      {:ok, nodes} -> nodes
+      {:error, reason} -> raise "Parse error: #{inspect(reason)}"
+    end
+  end
+
+  # --- Translation ---
+
+  # Cons cell: [head | tail]
+  defp translate([{:|, meta, [head, tail]}], counter, file) do
+    head_node = translate(head, counter, file)
+    tail_node = translate(tail, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :cons,
+      children: [head_node, tail_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # List literal
+  defp translate(list, counter, file) when is_list(list) do
+    children = Enum.map(list, &translate(&1, counter, file))
+
+    %Node{
+      id: Counter.next(counter),
+      type: :list,
+      children: children
+    }
+  end
+
+  # Literals: integers, floats, atoms, strings
+  defp translate(literal, counter, _file)
+       when is_integer(literal) or is_float(literal) or is_binary(literal) do
+    %Node{
+      id: Counter.next(counter),
+      type: :literal,
+      meta: %{value: literal}
+    }
+  end
+
+  defp translate(literal, counter, _file) when is_atom(literal) do
+    %Node{
+      id: Counter.next(counter),
+      type: :literal,
+      meta: %{value: literal}
+    }
+  end
+
+  # Variable reference
+  defp translate({name, meta, context}, counter, file)
+       when is_atom(name) and is_atom(context) do
+    %Node{
+      id: Counter.next(counter),
+      type: :var,
+      meta: %{name: name, context: context},
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Block
+  defp translate({:__block__, meta, exprs}, counter, file) do
+    children = Enum.map(exprs, &translate(&1, counter, file))
+
+    %Node{
+      id: Counter.next(counter),
+      type: :block,
+      children: children,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Module definition
+  defp translate({:defmodule, meta, [alias_ast, [do: body]]}, counter, file) do
+    body_node = translate(body, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :module_def,
+      meta: %{name: module_name(alias_ast)},
+      children: [body_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Function definitions: def, defp
+  defp translate({def_kind, meta, [{:when, _, [head | guards]}, [do: body]]}, counter, file)
+       when def_kind in [:def, :defp] do
+    translate_function_def(def_kind, meta, head, guards, body, counter, file)
+  end
+
+  defp translate({def_kind, meta, [head, [do: body]]}, counter, file)
+       when def_kind in [:def, :defp] do
+    translate_function_def(def_kind, meta, head, [], body, counter, file)
+  end
+
+  # Multi-clause function definitions (bare clause, no body block)
+  defp translate({def_kind, meta, [head]}, counter, file)
+       when def_kind in [:def, :defp] do
+    {name, arity} = fun_name_arity(head)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :function_def,
+      meta: %{name: name, arity: arity, kind: def_kind, has_body: false},
+      children: [],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Pipe operator — desugar into nested calls
+  defp translate({:|>, meta, [left, right]}, counter, file) do
+    desugared = desugar_pipe(left, right)
+    node = translate(desugared, counter, file)
+    %{node | meta: Map.put(node.meta, :desugared_from, :pipe), source_span: span_from_meta(meta, file)}
+  end
+
+  # if/unless — desugar into case
+  defp translate({kind, meta, [condition, branches]}, counter, file)
+       when kind in [:if, :unless] do
+    do_body = Keyword.get(branches, :do, nil)
+    else_body = Keyword.get(branches, :else, nil)
+
+    {true_body, false_body} =
+      if kind == :if, do: {do_body, else_body}, else: {else_body, do_body}
+
+    condition_node = translate(condition, counter, file)
+    true_node = translate_nullable(true_body, counter, file)
+    false_node = translate_nullable(false_body, counter, file)
+
+    true_clause = %Node{
+      id: Counter.next(counter),
+      type: :clause,
+      meta: %{kind: :true_branch},
+      children: [true_node]
+    }
+
+    false_clause = %Node{
+      id: Counter.next(counter),
+      type: :clause,
+      meta: %{kind: :false_branch},
+      children: [false_node]
+    }
+
+    %Node{
+      id: Counter.next(counter),
+      type: :case,
+      meta: %{desugared_from: kind},
+      children: [condition_node, true_clause, false_clause],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # cond — desugar into case
+  defp translate({:cond, meta, [[do: clauses]]}, counter, file) do
+    children =
+      Enum.map(clauses, fn {:->, clause_meta, [[condition], body]} ->
+        cond_node = translate(condition, counter, file)
+        body_node = translate(body, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :clause,
+          meta: %{kind: :cond_clause},
+          children: [cond_node, body_node],
+          source_span: span_from_meta(clause_meta, file)
+        }
+      end)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :case,
+      meta: %{desugared_from: :cond},
+      children: children,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # case
+  defp translate({:case, meta, [expr, [do: clauses]]}, counter, file) do
+    expr_node = translate(expr, counter, file)
+
+    clause_nodes =
+      Enum.with_index(clauses, fn {:->, clause_meta, [patterns, body]}, index ->
+        {pattern_nodes, guard_nodes} = extract_patterns_and_guards(patterns, counter, file)
+        body_node = translate(body, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :clause,
+          meta: %{kind: :case_clause, index: index},
+          children: pattern_nodes ++ guard_nodes ++ [body_node],
+          source_span: span_from_meta(clause_meta, file)
+        }
+      end)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :case,
+      children: [expr_node | clause_nodes],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # with
+  defp translate({:with, meta, clauses_and_body}, counter, file) do
+    {clauses, opts} = split_with_clauses(clauses_and_body)
+    do_body = Keyword.get(opts, :do)
+    else_clauses = Keyword.get(opts, :else, [])
+
+    clause_nodes =
+      Enum.map(clauses, fn {:<-, clause_meta, [pattern, expr]} ->
+        pattern_node = translate(pattern, counter, file)
+        expr_node = translate(expr, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :clause,
+          meta: %{kind: :with_clause},
+          children: [pattern_node, expr_node],
+          source_span: span_from_meta(clause_meta, file)
+        }
+      end)
+
+    body_node = translate(do_body, counter, file)
+
+    else_nodes =
+      Enum.with_index(else_clauses, fn {:->, clause_meta, [patterns, body]}, index ->
+        {pattern_nodes, guard_nodes} = extract_patterns_and_guards(patterns, counter, file)
+        body_ir = translate(body, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :clause,
+          meta: %{kind: :else_clause, index: index},
+          children: pattern_nodes ++ guard_nodes ++ [body_ir],
+          source_span: span_from_meta(clause_meta, file)
+        }
+      end)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :case,
+      meta: %{desugared_from: :with},
+      children: clause_nodes ++ [body_node | else_nodes],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # try
+  defp translate({:try, meta, [[do: body] ++ rest]}, counter, file) do
+    body_node = translate(body, counter, file)
+
+    rescue_nodes = translate_handler_clauses(rest[:rescue], :rescue, counter, file)
+    catch_nodes = translate_handler_clauses(rest[:catch], :catch_clause, counter, file)
+
+    after_node =
+      case rest[:after] do
+        nil -> []
+        after_body -> [%Node{
+          id: Counter.next(counter),
+          type: :after,
+          children: [translate(after_body, counter, file)]
+        }]
+      end
+
+    else_nodes = translate_handler_clauses(rest[:else], :clause, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :try,
+      children: [body_node] ++ rescue_nodes ++ catch_nodes ++ after_node ++ else_nodes,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # receive
+  defp translate({:receive, meta, [[do: clauses] ++ rest]}, counter, file) do
+    clause_nodes =
+      Enum.with_index(clauses, fn {:->, clause_meta, [patterns, body]}, index ->
+        {pattern_nodes, guard_nodes} = extract_patterns_and_guards(patterns, counter, file)
+        body_node = translate(body, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :clause,
+          meta: %{kind: :receive_clause, index: index},
+          children: pattern_nodes ++ guard_nodes ++ [body_node],
+          source_span: span_from_meta(clause_meta, file)
+        }
+      end)
+
+    after_node =
+      case rest[:after] do
+        nil ->
+          []
+
+        [{:->, after_meta, [[timeout], body]}] ->
+          timeout_node = translate(timeout, counter, file)
+          body_node = translate(body, counter, file)
+
+          [%Node{
+            id: Counter.next(counter),
+            type: :clause,
+            meta: %{kind: :timeout_clause},
+            children: [timeout_node, body_node],
+            source_span: span_from_meta(after_meta, file)
+          }]
+      end
+
+    %Node{
+      id: Counter.next(counter),
+      type: :receive,
+      children: clause_nodes ++ after_node,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Anonymous function
+  defp translate({:fn, meta, clauses}, counter, file) do
+    clause_nodes =
+      Enum.with_index(clauses, fn {:->, clause_meta, [params, body]}, index ->
+        {pattern_nodes, guard_nodes} = extract_patterns_and_guards(params, counter, file)
+        body_node = translate(body, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :clause,
+          meta: %{kind: :fn_clause, index: index},
+          children: pattern_nodes ++ guard_nodes ++ [body_node],
+          source_span: span_from_meta(clause_meta, file)
+        }
+      end)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :fn,
+      children: clause_nodes,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # for comprehension
+  defp translate({:for, meta, args}, counter, file) do
+    {clauses, opts} = split_for_clauses(args)
+    opts = List.flatten(opts)
+
+    clause_nodes =
+      Enum.map(clauses, fn
+        {:<-, clause_meta, [pattern, enumerable]} ->
+          pat_node = translate(pattern, counter, file)
+          enum_node = translate(enumerable, counter, file)
+
+          %Node{
+            id: Counter.next(counter),
+            type: :generator,
+            children: [pat_node, enum_node],
+            source_span: span_from_meta(clause_meta, file)
+          }
+
+        {:"<<>>", _, [{:<-, clause_meta, [pattern, enumerable]}]} ->
+          pat_node = translate(pattern, counter, file)
+          enum_node = translate(enumerable, counter, file)
+
+          %Node{
+            id: Counter.next(counter),
+            type: :generator,
+            meta: %{kind: :binary},
+            children: [pat_node, enum_node],
+            source_span: span_from_meta(clause_meta, file)
+          }
+
+        filter_expr ->
+          %Node{
+            id: Counter.next(counter),
+            type: :filter,
+            children: [translate(filter_expr, counter, file)]
+          }
+      end)
+
+    body_node = translate(Keyword.get(opts, :do), counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :comprehension,
+      meta: Map.new(Keyword.drop(opts, [:do])),
+      children: clause_nodes ++ [body_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Match operator
+  defp translate({:=, meta, [left, right]}, counter, file) do
+    left_node = translate(left, counter, file)
+    right_node = translate(right, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :match,
+      children: [left_node, right_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Pin operator
+  defp translate({:^, meta, [inner]}, counter, file) do
+    inner_node = translate(inner, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :pin,
+      children: [inner_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Tuple literal
+  defp translate({:{}, meta, elements}, counter, file) do
+    children = Enum.map(elements, &translate(&1, counter, file))
+
+    %Node{
+      id: Counter.next(counter),
+      type: :tuple,
+      children: children,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Two-element tuple (special AST form)
+  # In Elixir AST, {a, b} is represented as a raw tuple, not {:"{}",...}
+  defp translate({left, right}, counter, file) do
+    left_node = translate(left, counter, file)
+    right_node = translate(right, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :tuple,
+      children: [left_node, right_node]
+    }
+  end
+
+  # Map
+  defp translate({:%{}, meta, pairs}, counter, file) do
+    children =
+      Enum.map(pairs, fn
+        {key, value} ->
+          key_node = translate(key, counter, file)
+          val_node = translate(value, counter, file)
+
+          %Node{
+            id: Counter.next(counter),
+            type: :map_field,
+            children: [key_node, val_node]
+          }
+
+        # Map update syntax: %{map | key: val}
+        {:|, _, [map_expr, updates]} ->
+          map_node = translate(map_expr, counter, file)
+
+          update_nodes =
+            Enum.map(updates, fn {key, value} ->
+              key_node = translate(key, counter, file)
+              val_node = translate(value, counter, file)
+
+              %Node{
+                id: Counter.next(counter),
+                type: :map_field,
+                meta: %{kind: :update},
+                children: [key_node, val_node]
+              }
+            end)
+
+          %Node{
+            id: Counter.next(counter),
+            type: :map,
+            meta: %{kind: :update},
+            children: [map_node | update_nodes]
+          }
+      end)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :map,
+      children: children,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Struct
+  defp translate({:%, meta, [struct_alias, {:%{}, _, pairs}]}, counter, file) do
+    struct_name = module_name(struct_alias)
+
+    children =
+      Enum.map(pairs, fn {key, value} ->
+        key_node = translate(key, counter, file)
+        val_node = translate(value, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :map_field,
+          children: [key_node, val_node]
+        }
+      end)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :struct,
+      meta: %{name: struct_name},
+      children: children,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Cons cell: [head | tail] — must be before generic list
+  defp translate([{:|, meta, [head, tail]}], counter, file) do
+    head_node = translate(head, counter, file)
+    tail_node = translate(tail, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :cons,
+      children: [head_node, tail_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # List
+  defp translate(list, counter, file) when is_list(list) do
+    children = Enum.map(list, &translate(&1, counter, file))
+
+    %Node{
+      id: Counter.next(counter),
+      type: :list,
+      children: children
+    }
+  end
+
+  # Binary operators
+  @binary_ops [:+, :-, :*, :/, :++, :--, :<>, :and, :or, :&&, :||, :==, :!=,
+               :===, :!==, :<, :>, :<=, :>=, :in, :.., :"//"]
+  defp translate({op, meta, [left, right]}, counter, file) when op in @binary_ops do
+    left_node = translate(left, counter, file)
+    right_node = translate(right, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :binary_op,
+      meta: %{operator: op},
+      children: [left_node, right_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Unary operators
+  @unary_ops [:not, :!, :-, :+, :^^^]
+  defp translate({op, meta, [operand]}, counter, file) when op in @unary_ops do
+    operand_node = translate(operand, counter, file)
+
+    %Node{
+      id: Counter.next(counter),
+      type: :unary_op,
+      meta: %{operator: op},
+      children: [operand_node],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # General function call: local or remote
+  defp translate({:., meta, [module, fun_name]}, counter, file) when is_atom(fun_name) do
+    # This is the dot access form, actual call is the parent
+    # We translate this as part of the call handler below
+    %Node{
+      id: Counter.next(counter),
+      type: :call,
+      meta: %{module: module_name(module), function: fun_name, kind: :remote},
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Remote call: Module.function(args)
+  defp translate({{:., meta, [module, fun_name]}, call_meta, args}, counter, file)
+       when is_atom(fun_name) do
+    arg_nodes = Enum.map(args, &translate(&1, counter, file))
+
+    %Node{
+      id: Counter.next(counter),
+      type: :call,
+      meta: %{
+        module: module_name(module),
+        function: fun_name,
+        arity: length(args),
+        kind: :remote
+      },
+      children: arg_nodes,
+      source_span: span_from_meta(call_meta || meta, file)
+    }
+  end
+
+  # Local call: function(args)
+  defp translate({fun_name, meta, args}, counter, file)
+       when is_atom(fun_name) and is_list(args) do
+    arg_nodes = Enum.map(args, &translate(&1, counter, file))
+
+    %Node{
+      id: Counter.next(counter),
+      type: :call,
+      meta: %{function: fun_name, arity: length(args), kind: :local},
+      children: arg_nodes,
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  # Catch-all for unhandled AST forms
+  defp translate(ast, counter, _file) do
+    %Node{
+      id: Counter.next(counter),
+      type: :literal,
+      meta: %{value: ast, raw: true}
+    }
+  end
+
+  # --- Helpers ---
+
+  defp translate_function_def(def_kind, meta, head, guards, body, counter, file) do
+    {name, arity} = fun_name_arity(head)
+    params = fun_params(head)
+
+    param_nodes = Enum.map(params, &translate(&1, counter, file))
+
+    guard_nodes =
+      Enum.map(guards, fn g ->
+        %Node{
+          id: Counter.next(counter),
+          type: :guard,
+          children: [translate(g, counter, file)]
+        }
+      end)
+
+    body_node = translate(body, counter, file)
+
+    clause = %Node{
+      id: Counter.next(counter),
+      type: :clause,
+      meta: %{kind: :function_clause},
+      children: param_nodes ++ guard_nodes ++ [body_node]
+    }
+
+    %Node{
+      id: Counter.next(counter),
+      type: :function_def,
+      meta: %{name: name, arity: arity, kind: def_kind},
+      children: [clause],
+      source_span: span_from_meta(meta, file)
+    }
+  end
+
+  defp translate_handler_clauses(nil, _type, _counter, _file), do: []
+
+  defp translate_handler_clauses(clauses, type, counter, file) do
+    Enum.with_index(clauses, fn {:->, clause_meta, [patterns, body]}, index ->
+      {pattern_nodes, guard_nodes} = extract_patterns_and_guards(patterns, counter, file)
+      body_node = translate(body, counter, file)
+
+      %Node{
+        id: Counter.next(counter),
+        type: type,
+        meta: %{index: index},
+        children: pattern_nodes ++ guard_nodes ++ [body_node],
+        source_span: span_from_meta(clause_meta, file)
+      }
+    end)
+  end
+
+  defp translate_nullable(nil, counter, _file) do
+    %Node{id: Counter.next(counter), type: :literal, meta: %{value: nil}}
+  end
+
+  defp translate_nullable(ast, counter, file), do: translate(ast, counter, file)
+
+  defp extract_patterns_and_guards(patterns, counter, file) do
+    Enum.reduce(patterns, {[], []}, fn
+      {:when, _, [pattern | guards]}, {pats, gs} ->
+        pat = translate(pattern, counter, file)
+
+        new_guards =
+          Enum.map(guards, fn g ->
+            %Node{
+              id: Counter.next(counter),
+              type: :guard,
+              children: [translate(g, counter, file)]
+            }
+          end)
+
+        {pats ++ [pat], gs ++ new_guards}
+
+      pattern, {pats, gs} ->
+        {pats ++ [translate(pattern, counter, file)], gs}
+    end)
+  end
+
+  defp desugar_pipe(left, {fun, meta, args}) when is_list(args) do
+    {fun, meta, [left | args]}
+  end
+
+  defp desugar_pipe(left, {fun, meta, nil}) do
+    {fun, meta, [left]}
+  end
+
+  defp split_with_clauses(args) do
+    Enum.split_while(args, fn
+      {:<-, _, _} -> true
+      _ -> false
+    end)
+  end
+
+  defp split_for_clauses(args) do
+    Enum.split_while(args, fn
+      {:<-, _, _} -> true
+      expr when not is_list(expr) -> true
+      _ -> false
+    end)
+  end
+
+  defp fun_name_arity({:when, _, [{name, _, args} | _]}) when is_list(args),
+    do: {name, length(args)}
+
+  defp fun_name_arity({name, _, args}) when is_atom(name) and is_list(args),
+    do: {name, length(args)}
+
+  defp fun_name_arity({name, _, _}) when is_atom(name), do: {name, 0}
+
+  defp fun_params({:when, _, [{_, _, args} | _]}) when is_list(args), do: args
+  defp fun_params({_, _, args}) when is_list(args), do: args
+  defp fun_params(_), do: []
+
+  defp module_name({:__aliases__, _, parts}), do: Module.concat(parts)
+  defp module_name(atom) when is_atom(atom), do: atom
+  defp module_name(other), do: other
+
+  defp span_from_meta(meta, file) when is_list(meta) do
+    case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+      {nil, _} -> nil
+      {line, col} ->
+        %{
+          file: file,
+          start_line: line,
+          start_col: col || 1,
+          end_line: Keyword.get(meta, :end_of_expression, []) |> Keyword.get(:line, nil),
+          end_col: nil
+        }
+    end
+  end
+
+  defp span_from_meta(_, _), do: nil
+end

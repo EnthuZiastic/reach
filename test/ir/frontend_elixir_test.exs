@@ -1,0 +1,434 @@
+defmodule ExPDG.Frontend.ElixirTest do
+  use ExUnit.Case, async: true
+
+  alias ExPDG.IR
+  alias ExPDG.IR.Node
+
+  describe "literals" do
+    test "integer" do
+      [node] = IR.from_string!("42")
+      assert %Node{type: :literal, meta: %{value: 42}} = node
+    end
+
+    test "float" do
+      [node] = IR.from_string!("3.14")
+      assert %Node{type: :literal, meta: %{value: 3.14}} = node
+    end
+
+    test "string" do
+      [node] = IR.from_string!(~s("hello"))
+      assert %Node{type: :literal, meta: %{value: "hello"}} = node
+    end
+
+    test "atom" do
+      [node] = IR.from_string!(":ok")
+      assert %Node{type: :literal, meta: %{value: :ok}} = node
+    end
+
+    test "boolean" do
+      [node] = IR.from_string!("true")
+      assert %Node{type: :literal, meta: %{value: true}} = node
+    end
+
+    test "nil" do
+      [node] = IR.from_string!("nil")
+      assert %Node{type: :literal, meta: %{value: nil}} = node
+    end
+  end
+
+  describe "variables" do
+    test "simple variable" do
+      [node] = IR.from_string!("x")
+      assert %Node{type: :var, meta: %{name: :x}} = node
+    end
+
+    test "preserves variable name" do
+      [node] = IR.from_string!("my_var")
+      assert %Node{type: :var, meta: %{name: :my_var}} = node
+    end
+  end
+
+  describe "match operator" do
+    test "simple assignment" do
+      [node] = IR.from_string!("x = 1")
+      assert %Node{type: :match, children: [left, right]} = node
+      assert %Node{type: :var, meta: %{name: :x}} = left
+      assert %Node{type: :literal, meta: %{value: 1}} = right
+    end
+
+    test "pattern match with tuple" do
+      [node] = IR.from_string!("{a, b} = foo()")
+      assert %Node{type: :match} = node
+      [tuple, call] = node.children
+      assert %Node{type: :tuple} = tuple
+      assert %Node{type: :call, meta: %{function: :foo}} = call
+    end
+  end
+
+  describe "function calls" do
+    test "local call" do
+      [node] = IR.from_string!("foo(1, 2)")
+      assert %Node{type: :call, meta: %{function: :foo, arity: 2, kind: :local}} = node
+      assert length(node.children) == 2
+    end
+
+    test "remote call" do
+      [node] = IR.from_string!("Enum.map(list, fun)")
+      assert %Node{type: :call, meta: %{module: Enum, function: :map, arity: 2, kind: :remote}} = node
+    end
+
+    test "zero-arity call" do
+      [node] = IR.from_string!("foo()")
+      assert %Node{type: :call, meta: %{function: :foo, arity: 0}} = node
+    end
+  end
+
+  describe "pipe operator desugaring" do
+    test "simple pipe" do
+      [node] = IR.from_string!("x |> foo()")
+      assert %Node{type: :call, meta: %{function: :foo, desugared_from: :pipe}} = node
+      assert length(node.children) == 1
+    end
+
+    test "pipe with args" do
+      [node] = IR.from_string!("x |> foo(1)")
+      assert %Node{type: :call, meta: %{function: :foo, desugared_from: :pipe}} = node
+      assert length(node.children) == 2
+    end
+
+    test "pipe chain desugars into nested calls" do
+      [node] = IR.from_string!("x |> foo() |> bar()")
+      assert %Node{type: :call, meta: %{function: :bar, desugared_from: :pipe}} = node
+      [inner] = node.children
+      assert %Node{type: :call, meta: %{function: :foo}} = inner
+    end
+  end
+
+  describe "if/unless desugaring" do
+    test "if desugars to case with two branches" do
+      [node] = IR.from_string!("""
+      if x do
+        1
+      else
+        2
+      end
+      """)
+
+      assert %Node{type: :case, meta: %{desugared_from: :if}} = node
+      [condition, true_clause, false_clause] = node.children
+      assert %Node{type: :var, meta: %{name: :x}} = condition
+      assert %Node{type: :clause, meta: %{kind: :true_branch}} = true_clause
+      assert %Node{type: :clause, meta: %{kind: :false_branch}} = false_clause
+    end
+
+    test "unless desugars with swapped branches" do
+      [node] = IR.from_string!("""
+      unless x do
+        1
+      else
+        2
+      end
+      """)
+
+      assert %Node{type: :case, meta: %{desugared_from: :unless}} = node
+      [_cond, true_clause, false_clause] = node.children
+      # unless swaps: do-block becomes false branch
+      assert %Node{type: :clause, meta: %{kind: :true_branch}} = true_clause
+      assert %Node{type: :clause, meta: %{kind: :false_branch}} = false_clause
+    end
+  end
+
+  describe "case" do
+    test "case with multiple clauses" do
+      [node] = IR.from_string!("""
+      case x do
+        :ok -> 1
+        :error -> 2
+        _ -> 3
+      end
+      """)
+
+      assert %Node{type: :case} = node
+      [expr | clauses] = node.children
+      assert %Node{type: :var} = expr
+      assert length(clauses) == 3
+
+      Enum.each(clauses, fn clause ->
+        assert %Node{type: :clause, meta: %{kind: :case_clause}} = clause
+      end)
+    end
+
+    test "case clause indices" do
+      [node] = IR.from_string!("""
+      case x do
+        1 -> :a
+        2 -> :b
+      end
+      """)
+
+      [_expr | clauses] = node.children
+      assert [%{meta: %{index: 0}}, %{meta: %{index: 1}}] = clauses
+    end
+  end
+
+  describe "cond" do
+    test "cond desugars to case" do
+      [node] = IR.from_string!("""
+      cond do
+        x > 0 -> :positive
+        true -> :non_positive
+      end
+      """)
+
+      assert %Node{type: :case, meta: %{desugared_from: :cond}} = node
+      assert length(node.children) == 2
+    end
+  end
+
+  describe "function definitions" do
+    test "simple def" do
+      [node] = IR.from_string!("""
+      def foo(x) do
+        x + 1
+      end
+      """)
+
+      assert %Node{type: :function_def, meta: %{name: :foo, arity: 1, kind: :def}} = node
+      [clause] = node.children
+      assert %Node{type: :clause, meta: %{kind: :function_clause}} = clause
+    end
+
+    test "def with guards" do
+      [node] = IR.from_string!("""
+      def foo(x) when is_integer(x) do
+        x + 1
+      end
+      """)
+
+      assert %Node{type: :function_def} = node
+      [clause] = node.children
+      guards = Enum.filter(clause.children, &(&1.type == :guard))
+      assert length(guards) == 1
+    end
+
+    test "defp" do
+      [node] = IR.from_string!("""
+      defp bar(x), do: x
+      """)
+
+      assert %Node{type: :function_def, meta: %{kind: :defp}} = node
+    end
+  end
+
+  describe "try" do
+    test "try/rescue" do
+      [node] = IR.from_string!("""
+      try do
+        risky()
+      rescue
+        e in RuntimeError -> handle(e)
+      end
+      """)
+
+      assert %Node{type: :try} = node
+      rescue_nodes = Enum.filter(node.children, &(&1.type == :rescue))
+      assert length(rescue_nodes) == 1
+    end
+  end
+
+  describe "receive" do
+    test "receive with timeout" do
+      [node] = IR.from_string!("""
+      receive do
+        {:msg, data} -> data
+      after
+        5000 -> :timeout
+      end
+      """)
+
+      assert %Node{type: :receive} = node
+      clauses = node.children
+      receive_clauses = Enum.filter(clauses, &(&1.meta[:kind] == :receive_clause))
+      timeout_clauses = Enum.filter(clauses, &(&1.meta[:kind] == :timeout_clause))
+      assert length(receive_clauses) == 1
+      assert length(timeout_clauses) == 1
+    end
+  end
+
+  describe "anonymous functions" do
+    test "fn with single clause" do
+      [node] = IR.from_string!("fn x -> x + 1 end")
+      assert %Node{type: :fn} = node
+      assert length(node.children) == 1
+      [clause] = node.children
+      assert %Node{type: :clause, meta: %{kind: :fn_clause}} = clause
+    end
+
+    test "fn with multiple clauses" do
+      [node] = IR.from_string!("""
+      fn
+        :ok -> 1
+        :error -> 2
+      end
+      """)
+
+      assert %Node{type: :fn} = node
+      assert length(node.children) == 2
+    end
+  end
+
+  describe "for comprehension" do
+    test "simple for" do
+      [node] = IR.from_string!("""
+      for x <- list do
+        x * 2
+      end
+      """)
+
+      assert %Node{type: :comprehension} = node
+      generators = Enum.filter(node.children, &(&1.type == :generator))
+      assert length(generators) == 1
+    end
+
+    test "for with filter" do
+      [node] = IR.from_string!("""
+      for x <- list, x > 0 do
+        x
+      end
+      """)
+
+      assert %Node{type: :comprehension} = node
+      filters = Enum.filter(node.children, &(&1.type == :filter))
+      assert length(filters) == 1
+    end
+  end
+
+  describe "data structures" do
+    test "tuple" do
+      [node] = IR.from_string!("{1, 2, 3}")
+      assert %Node{type: :tuple} = node
+      assert length(node.children) == 3
+    end
+
+    test "two-element tuple" do
+      [node] = IR.from_string!("{:ok, 1}")
+      assert %Node{type: :tuple} = node
+      assert length(node.children) == 2
+    end
+
+    test "list" do
+      [node] = IR.from_string!("[1, 2, 3]")
+      assert %Node{type: :list} = node
+      assert length(node.children) == 3
+    end
+
+    test "cons cell" do
+      [node] = IR.from_string!("[head | tail]")
+      assert %Node{type: :cons} = node
+      assert length(node.children) == 2
+    end
+
+    test "map" do
+      [node] = IR.from_string!("%{a: 1, b: 2}")
+      assert %Node{type: :map} = node
+      assert length(node.children) == 2
+    end
+
+    test "struct" do
+      [node] = IR.from_string!("%User{name: \"Alice\"}")
+      assert %Node{type: :struct, meta: %{name: User}} = node
+    end
+  end
+
+  describe "operators" do
+    test "binary operator" do
+      [node] = IR.from_string!("x + 1")
+      assert %Node{type: :binary_op, meta: %{operator: :+}} = node
+      assert length(node.children) == 2
+    end
+
+    test "unary operator" do
+      [node] = IR.from_string!("not x")
+      assert %Node{type: :unary_op, meta: %{operator: :not}} = node
+    end
+
+    test "comparison" do
+      [node] = IR.from_string!("x > 0")
+      assert %Node{type: :binary_op, meta: %{operator: :>}} = node
+    end
+  end
+
+  describe "pin operator" do
+    test "pin is a use, not a definition" do
+      [node] = IR.from_string!("^x")
+      assert %Node{type: :pin} = node
+      [inner] = node.children
+      assert %Node{type: :var, meta: %{name: :x}} = inner
+    end
+  end
+
+  describe "block" do
+    test "multi-expression block" do
+      [node] = IR.from_string!("""
+      (
+        x = 1
+        y = 2
+        x + y
+      )
+      """)
+
+      assert %Node{type: :block} = node
+      assert length(node.children) == 3
+    end
+  end
+
+  describe "source spans" do
+    test "preserves line and column" do
+      [node] = IR.from_string!("x = 1")
+      assert node.source_span != nil
+      assert node.source_span.start_line == 1
+      assert node.source_span.start_col >= 1
+    end
+  end
+
+  describe "IR utilities" do
+    test "all_nodes collects all nodes depth-first" do
+      [root] = IR.from_string!("x = 1 + 2")
+      all = IR.all_nodes(root)
+      types = Enum.map(all, & &1.type)
+      assert :match in types
+      assert :var in types
+      assert :binary_op in types
+      assert :literal in types
+    end
+
+    test "find_by_type" do
+      nodes = IR.from_string!("x = 1 + 2")
+      literals = IR.find_by_type(nodes, :literal)
+      assert length(literals) == 2
+    end
+
+    test "find_by_id" do
+      [root] = IR.from_string!("x = 1")
+      found = IR.find_by_id(root, root.id)
+      assert found.id == root.id
+    end
+
+    test "unique IDs across all nodes" do
+      nodes = IR.from_string!("""
+      def foo(x, y) do
+        z = x + y
+        if z > 0 do
+          z
+        else
+          -z
+        end
+      end
+      """)
+
+      all = IR.all_nodes(nodes)
+      ids = Enum.map(all, & &1.id)
+      assert ids == Enum.uniq(ids)
+    end
+  end
+end
