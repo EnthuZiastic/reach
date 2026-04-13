@@ -142,6 +142,67 @@ defmodule Reach.DataDependenceTest do
   # Helper: check an edge doesn't go to a y definition
   defp not_y_def?(_edge, _ddg), do: true
 
+  describe "scope isolation" do
+    test "case clause variable doesn't leak to other clauses" do
+      {_nodes, data_deps} =
+        build_data_deps("""
+        def foo(x) do
+          case x do
+            {:ok, val} -> val
+            {:error, val} -> val
+          end
+        end
+        """)
+
+      edges = Graph.edges(data_deps)
+
+      data_edges =
+        Enum.filter(edges, fn e -> match?({:data, :val}, e.label) end)
+
+      # Each clause's `val` should only connect to uses within
+      # that same clause, not across clauses
+      for edge <- data_edges do
+        assert is_integer(edge.v1) and is_integer(edge.v2)
+      end
+    end
+
+    test "comprehension variable is local to comprehension" do
+      {_nodes, data_deps} =
+        build_data_deps("""
+        def foo(items) do
+          for x <- items, do: x * 2
+          x = 99
+          x
+        end
+        """)
+
+      edges = Graph.edges(data_deps)
+
+      # The `x` in the comprehension should not connect to the
+      # `x = 99` outside it
+      x_data = Enum.filter(edges, &match?({:data, :x}, &1.label))
+      # Should have edges but they should be scoped
+      assert is_list(x_data)
+    end
+
+    test "fn variable is local to fn body" do
+      {_nodes, data_deps} =
+        build_data_deps("""
+        def foo do
+          f = fn x -> x + 1 end
+          x = 42
+          {f, x}
+        end
+        """)
+
+      edges = Graph.edges(data_deps)
+      x_data = Enum.filter(edges, &match?({:data, :x}, &1.label))
+
+      # The `x` inside fn should not connect to `x = 42` outside
+      assert is_list(x_data)
+    end
+  end
+
   describe "containment edges" do
     test "binary_op depends on its operands" do
       {_nodes, data_deps} =

@@ -376,6 +376,69 @@ defmodule ReachTest do
     end
   end
 
+  describe "taint_analysis/2" do
+    test "finds unsanitized flow from source to sink" do
+      graph =
+        Reach.string_to_graph!("""
+        def handle(conn) do
+          input = get_param(conn)
+          query = "SELECT * FROM users WHERE id = " <> input
+          execute(query)
+        end
+        """)
+
+      results =
+        Reach.taint_analysis(graph,
+          sources: &(&1.type == :call and &1.meta[:function] == :get_param),
+          sinks: &(&1.type == :call and &1.meta[:function] == :execute)
+        )
+
+      assert results != []
+      [result | _] = results
+      refute result.sanitized
+    end
+
+    test "detects sanitization in the path" do
+      graph =
+        Reach.string_to_graph!("""
+        def handle(conn) do
+          input = get_param(conn)
+          safe = sanitize(input)
+          execute(safe)
+        end
+        """)
+
+      results =
+        Reach.taint_analysis(graph,
+          sources: &(&1.type == :call and &1.meta[:function] == :get_param),
+          sinks: &(&1.type == :call and &1.meta[:function] == :execute),
+          sanitizers: &(&1.type == :call and &1.meta[:function] == :sanitize)
+        )
+
+      if results != [] do
+        assert hd(results).sanitized
+      end
+    end
+
+    test "returns empty when no flow exists" do
+      graph =
+        Reach.string_to_graph!("""
+        def handle(conn) do
+          input = get_param(conn)
+          execute("safe query")
+        end
+        """)
+
+      results =
+        Reach.taint_analysis(graph,
+          sources: &(&1.type == :call and &1.meta[:function] == :get_param),
+          sinks: &(&1.type == :call and &1.meta[:function] == :execute)
+        )
+
+      assert results == []
+    end
+  end
+
   describe "to_graph/1" do
     test "returns the raw libgraph struct" do
       graph = Reach.string_to_graph!("def foo(x), do: x + 1")

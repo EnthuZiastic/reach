@@ -1,6 +1,7 @@
 defmodule Reach.DataDependence do
   @moduledoc false
 
+  alias Reach.IR
   alias Reach.IR.Node
 
   @doc """
@@ -11,101 +12,141 @@ defmodule Reach.DataDependence do
   @spec build([Node.t()] | Node.t()) :: Graph.t()
   def build(nodes) do
     nodes = List.wrap(nodes)
-    all = Reach.IR.all_nodes(nodes)
+    all = IR.all_nodes(nodes)
 
-    # Collect definitions and uses for each node
-    bindings = Enum.map(all, fn node -> {node.id, analyze_bindings(node)} end) |> Map.new()
+    bindings = Map.new(all, fn node -> {node.id, analyze_bindings(node)} end)
+    scope_map = build_scope_map(nodes)
+    scoped_defs = build_scoped_def_map(all, bindings, scope_map)
 
-    # Build def-use edges by scope-aware reaching definitions
-    build_def_use_graph(all, bindings)
+    graph = build_def_use_edges(all, bindings, scoped_defs, scope_map)
+    add_containment_edges(graph, all)
   end
 
   @doc """
   Analyzes which variables a node defines and uses.
-
-  Returns `{definitions, uses}` where each is a list of variable names.
   """
   @spec analyze_bindings(Node.t()) :: {[atom()], [atom()]}
-  def analyze_bindings(%Node{type: :var, meta: %{name: name}}) do
-    {[], [name]}
-  end
+  def analyze_bindings(%Node{type: :var, meta: %{name: name}}), do: {[], [name]}
 
   def analyze_bindings(%Node{type: :match, children: [left, _right]}) do
-    defs = collect_definitions(left)
-    {defs, []}
+    {collect_definitions(left), []}
   end
 
   def analyze_bindings(%Node{type: :clause, meta: %{kind: kind}} = node)
       when kind in [:function_clause, :fn_clause] do
-    params = node.children |> Enum.reject(&(&1.type in [:guard, :block]))
-    defs = Enum.flat_map(params, &collect_definitions/1)
-    {defs, []}
+    params = Enum.reject(node.children, &(&1.type in [:guard, :block]))
+    {Enum.flat_map(params, &collect_definitions/1), []}
   end
 
   def analyze_bindings(%Node{type: :clause, meta: %{kind: kind}} = node)
       when kind in [:case_clause, :receive_clause, :with_clause, :else_clause] do
-    # First children are patterns
     patterns =
-      node.children
-      |> Enum.take_while(&(&1.type not in [:guard, :block, :call, :binary_op, :literal]))
+      Enum.take_while(
+        node.children,
+        &(&1.type not in [:guard, :block, :call, :binary_op, :literal])
+      )
 
-    defs = Enum.flat_map(patterns, &collect_definitions/1)
-    {defs, []}
+    {Enum.flat_map(patterns, &collect_definitions/1), []}
   end
 
-  def analyze_bindings(%Node{type: :generator, children: [pattern, _enumerable]}) do
-    defs = collect_definitions(pattern)
-    {defs, []}
+  def analyze_bindings(%Node{type: :generator, children: [pattern, _]}) do
+    {collect_definitions(pattern), []}
   end
 
   def analyze_bindings(%Node{type: :pin, children: [%Node{type: :var, meta: %{name: name}}]}) do
     {[], [name]}
   end
 
-  def analyze_bindings(_node) do
-    {[], []}
-  end
+  def analyze_bindings(_), do: {[], []}
 
   @doc """
   Collects variable names defined by a pattern.
   """
   @spec collect_definitions(Node.t()) :: [atom()]
-  def collect_definitions(%Node{type: :var, meta: %{name: name}}) do
-    [name]
-  end
-
-  def collect_definitions(%Node{type: :pin}) do
-    []
-  end
+  def collect_definitions(%Node{type: :var, meta: %{name: name}}), do: [name]
+  def collect_definitions(%Node{type: :pin}), do: []
 
   def collect_definitions(%Node{type: type, children: children})
       when type in [:tuple, :list, :cons, :map, :map_field, :struct, :match, :binary_op] do
     Enum.flat_map(children, &collect_definitions/1)
   end
 
-  def collect_definitions(_node) do
-    []
+  def collect_definitions(_), do: []
+
+  # --- Scope tracking ---
+
+  # Scope-introducing nodes: clause, fn, comprehension create new scopes
+  # where variables defined inside don't leak out.
+  @scope_types [:clause, :fn, :comprehension]
+
+  defp build_scope_map(nodes) do
+    {map, _} = walk_scopes(nodes, nil, %{})
+    map
   end
 
-  # --- Private ---
+  defp walk_scopes(nodes, parent_scope, acc) when is_list(nodes) do
+    Enum.reduce(nodes, {acc, parent_scope}, fn node, {a, ps} ->
+      walk_scopes(node, ps, a)
+    end)
+  end
 
-  defp build_def_use_graph(all_nodes, bindings) do
-    def_map = build_def_map(all_nodes, bindings)
+  defp walk_scopes(%Node{type: type, id: id, children: children}, parent_scope, acc)
+       when type in @scope_types do
+    acc = Map.put(acc, id, parent_scope)
+    {acc, _} = walk_scopes(children, id, acc)
+    {acc, parent_scope}
+  end
 
-    graph =
-      Enum.reduce(all_nodes, Graph.new(), fn node, graph ->
-        {_defs, uses} = Map.get(bindings, node.id, {[], []})
+  defp walk_scopes(%Node{id: id, children: children}, parent_scope, acc) do
+    acc = Map.put(acc, id, parent_scope)
+    {acc, _} = walk_scopes(children, parent_scope, acc)
+    {acc, parent_scope}
+  end
 
-        Enum.reduce(uses, graph, fn var_name, g ->
-          def_map
-          |> Map.get(var_name, [])
-          |> Enum.reject(&(&1 == node.id))
-          |> Enum.reduce(g, &add_data_edge(&2, &1, node.id, var_name))
-        end)
+  # --- Scoped def-use resolution ---
+
+  defp build_scoped_def_map(all_nodes, bindings, scope_map) do
+    Enum.reduce(all_nodes, %{}, fn node, acc ->
+      {defs, _} = Map.get(bindings, node.id, {[], []})
+      scope = Map.get(scope_map, node.id)
+
+      Enum.reduce(defs, acc, fn var_name, inner ->
+        Map.update(inner, {scope, var_name}, [node.id], &[node.id | &1])
       end)
-
-    add_containment_edges(graph, all_nodes)
+    end)
   end
+
+  defp resolve_def(scoped_defs, scope_map, scope, var_name) do
+    case Map.get(scoped_defs, {scope, var_name}) do
+      nil when scope == nil -> []
+      nil -> resolve_def(scoped_defs, scope_map, Map.get(scope_map, scope), var_name)
+      def_ids -> def_ids
+    end
+  end
+
+  defp build_def_use_edges(all_nodes, bindings, scoped_defs, scope_map) do
+    Enum.reduce(all_nodes, Graph.new(), fn node, graph ->
+      {_, uses} = Map.get(bindings, node.id, {[], []})
+      scope = Map.get(scope_map, node.id)
+      add_use_edges(graph, node, uses, scope, scoped_defs, scope_map)
+    end)
+  end
+
+  defp add_use_edges(graph, node, uses, scope, scoped_defs, scope_map) do
+    Enum.reduce(uses, graph, fn var_name, g ->
+      scoped_defs
+      |> resolve_def(scope_map, scope, var_name)
+      |> Enum.reject(&(&1 == node.id))
+      |> Enum.reduce(g, fn def_id, g2 ->
+        g2
+        |> Graph.add_vertex(def_id)
+        |> Graph.add_vertex(node.id)
+        |> Graph.add_edge(def_id, node.id, label: {:data, var_name})
+      end)
+    end)
+  end
+
+  # --- Containment edges ---
 
   defp add_containment_edges(graph, all_nodes) do
     all_nodes
@@ -138,21 +179,4 @@ defmodule Reach.DataDependence do
 
   defp value_depends_on_children?(%Node{type: type}) when type in @value_types, do: true
   defp value_depends_on_children?(_), do: false
-
-  defp build_def_map(all_nodes, bindings) do
-    Enum.reduce(all_nodes, %{}, fn node, acc ->
-      {defs, _uses} = Map.get(bindings, node.id, {[], []})
-
-      Enum.reduce(defs, acc, fn var_name, inner_acc ->
-        Map.update(inner_acc, var_name, [node.id], &[node.id | &1])
-      end)
-    end)
-  end
-
-  defp add_data_edge(graph, def_id, use_id, var_name) do
-    graph
-    |> Graph.add_vertex(def_id)
-    |> Graph.add_vertex(use_id)
-    |> Graph.add_edge(def_id, use_id, label: {:data, var_name})
-  end
 end
