@@ -21,6 +21,7 @@ defmodule Reach.Project do
   """
 
   alias Reach.{Frontend, IR}
+  alias Reach.IR.Counter
 
   @type t :: %__MODULE__{
           modules: %{module() => map()},
@@ -176,6 +177,8 @@ defmodule Reach.Project do
   # --- Private ---
 
   defp parse_files(paths, _opts) do
+    counter = Counter.new()
+
     paths
     |> Task.async_stream(
       fn path ->
@@ -185,12 +188,16 @@ defmodule Reach.Project do
         result =
           case language do
             :erlang -> Frontend.Erlang.parse_file(path, file: path)
-            :elixir -> parse_elixir_file(path)
+            :elixir -> parse_elixir_file(path, counter)
           end
 
         case result do
-          {:ok, ir_nodes} -> {module_name, path, ir_nodes}
-          {:error, _} -> nil
+          {:ok, ir_nodes} ->
+            mod = module_name || extract_module_name(ir_nodes)
+            {mod, path, ir_nodes}
+
+          {:error, _} ->
+            nil
         end
       end,
       max_concurrency: System.schedulers_online(),
@@ -202,9 +209,9 @@ defmodule Reach.Project do
     end)
   end
 
-  defp parse_elixir_file(path) do
+  defp parse_elixir_file(path, counter) do
     case File.read(path) do
-      {:ok, source} -> Frontend.Elixir.parse(source, file: path)
+      {:ok, source} -> Frontend.Elixir.parse(source, file: path, counter: counter)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -274,10 +281,9 @@ defmodule Reach.Project do
     plugin_edges = Reach.Plugin.run_analyze_project(plugins, module_sdgs, all_project_nodes, opts)
 
     merged_graph =
-      Graph.add_edges(
-        merged_graph,
-        Enum.map(plugin_edges, fn {v1, v2, label} -> Graph.Edge.new(v1, v2, label: label) end)
-      )
+      Enum.reduce(plugin_edges, merged_graph, fn {v1, v2, label}, g ->
+        Graph.add_edge(g, v1, v2, label: label)
+      end)
 
     %__MODULE__{
       modules: module_sdgs,
@@ -352,6 +358,13 @@ defmodule Reach.Project do
       ext when ext in [".erl", ".hrl"] -> :erlang
       _ -> :elixir
     end
+  end
+
+  defp extract_module_name(ir_nodes) do
+    Enum.find_value(ir_nodes, fn
+      %{type: :module_def, meta: %{name: name}} -> name
+      _ -> nil
+    end)
   end
 
   defp module_from_path(path) do

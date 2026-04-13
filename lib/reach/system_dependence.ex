@@ -56,10 +56,9 @@ defmodule Reach.SystemDependence do
     plugin_edges = Reach.Plugin.run_analyze(plugins, all_nodes, opts)
 
     graph =
-      Graph.add_edges(
-        graph,
-        Enum.map(plugin_edges, fn {v1, v2, label} -> Graph.Edge.new(v1, v2, label: label) end)
-      )
+      Enum.reduce(plugin_edges, graph, fn {v1, v2, label}, g ->
+        Graph.add_edge(g, v1, v2, label: label)
+      end)
 
     %__MODULE__{
       graph: graph,

@@ -21,7 +21,7 @@ defmodule Reach.Frontend.Elixir do
            file: file
          ) do
       {:ok, ast} ->
-        counter = Counter.new()
+        counter = Keyword.get(opts, :counter, Counter.new())
         nodes = translate(ast, counter, file)
         {:ok, List.wrap(nodes)}
 

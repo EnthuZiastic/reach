@@ -58,7 +58,9 @@ defmodule Reach.Plugin do
     {Phoenix.Router, Reach.Plugins.Phoenix},
     {Ecto, Reach.Plugins.Ecto},
     {Oban, Reach.Plugins.Oban},
-    {GenStage, Reach.Plugins.GenStage}
+    {GenStage, Reach.Plugins.GenStage},
+    {Jido.Action, Reach.Plugins.Jido},
+    {OpenTelemetry.Tracer, Reach.Plugins.OpenTelemetry}
   ]
 
   @doc false
