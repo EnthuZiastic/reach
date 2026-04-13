@@ -2,62 +2,111 @@
 
 Program dependence graph for Elixir and Erlang.
 
-Reach builds a graph that captures **what depends on what** in a program —
-which expressions produce values consumed by others (data dependence), and
-which expressions control whether others execute (control dependence). Once
-you have that graph, questions like "what affects this line?", "can these two
-statements be reordered?", and "does user input reach this sink?" become
-graph queries instead of bespoke analyses.
+Reach builds a graph that captures **what depends on what** in your code.
+Given any expression, you can ask: what affects it? What does it affect?
+Can these two statements be safely reordered? Does user input reach this
+database call without sanitization?
 
-## What it enables
+Built for tool authors — linters, clone detectors, refactoring tools,
+security analyzers — who need deeper analysis than the AST alone provides.
 
-**Slicing** — given any expression, find everything that affects it (backward
-slice) or everything it affects (forward slice):
+## Use cases
+
+### Security: taint analysis
+
+Does user input reach a dangerous sink without sanitization?
+
+```elixir
+graph = Reach.file_to_graph!("lib/my_app_web/controllers/user_controller.ex")
+
+# Find all Plug.Conn.params calls (taint sources)
+sources = Reach.nodes(graph, type: :call, module: Plug.Conn, function: :params)
+
+# Find all Ecto.Adapters.SQL.query calls (sinks)
+sinks = Reach.nodes(graph, type: :call, module: Ecto.Adapters.SQL, function: :query)
+
+for source <- sources, sink <- sinks do
+  if Reach.data_flows?(graph, source.id, sink.id) do
+    unless Reach.passes_through?(graph, source.id, sink.id, fn node ->
+      node.type == :call and node.meta[:function] == :sanitize
+    end) do
+      IO.warn("Unsanitized input flows to SQL query at #{inspect(sink.source_span)}")
+    end
+  end
+end
+```
+
+### Code quality: dead code and useless expressions
 
 ```elixir
 graph = Reach.file_to_graph!("lib/accounts.ex")
-Reach.backward_slice(graph, node_id)   # what does this depend on?
-Reach.forward_slice(graph, node_id)    # what does this influence?
+
+for node <- Reach.nodes(graph, type: :call),
+    Reach.pure?(node),
+    not Reach.has_dependents?(graph, node.id) do
+  IO.warn("Pure call result unused at #{inspect(node.source_span)}")
+end
 ```
 
-**Independence** — can two expressions be safely reordered? Reach checks data
-flow, control dependencies, and side effects:
+### Refactoring: safe reordering
 
 ```elixir
-Reach.independent?(graph, id_a, id_b)  #=> true — safe to reorder
+graph = Reach.file_to_graph!("lib/pipeline.ex")
+
+for block <- Reach.nodes(graph, type: :block),
+    {a, b} <- pairs(block.children) do
+  if Reach.independent?(graph, a.id, b.id) do
+    IO.puts("Statements at lines #{a.source_span.start_line} and " <>
+      "#{b.source_span.start_line} can be safely reordered")
+  end
+end
 ```
 
-**Taint analysis** — does data flow from a source to a sink, and does it pass
-through sanitization?
+### Clone detection: reordering-equivalent code
+
+Two blocks with the same statements in different order are clones if
+the statements are independent. `canonical_order` sorts independent
+siblings by structural hash so both orderings produce the same sequence:
 
 ```elixir
-Reach.data_flows?(graph, input_id, query_id)
-Reach.passes_through?(graph, input_id, query_id, &sanitized?/1)
+# For ExDNA integration
+order = Reach.canonical_order(graph, block_node_id)
+hash = :erlang.phash2(Enum.map(order, fn {_, node} -> node end))
 ```
 
-**Effect classification** — is a call pure, does it perform IO, write to ETS,
-send messages?
+### OTP: GenServer state flow analysis
 
 ```elixir
-Reach.pure?(node)                 #=> true
-Reach.classify_effect(node)       #=> :io
-```
-
-**Clone detection** — canonical ordering of independent statements for
-reordering-equivalent clone detection
-([ExDNA](https://github.com/dannote/ex_dna) integration):
-
-```elixir
-Reach.canonical_order(graph, block_id)
-```
-
-**OTP analysis** — GenServer state threading, ETS read/write dependencies,
-message ordering:
-
-```elixir
+graph = Reach.file_to_graph!("lib/my_server.ex")
 edges = Reach.edges(graph)
-Enum.filter(edges, &(&1.label == :state_read))    # state flow
-Enum.filter(edges, &match?({:ets_dep, _}, &1.label))  # ETS deps
+
+# Which callbacks read state?
+state_reads = Enum.filter(edges, &(&1.label == :state_read))
+
+# Does state flow between callbacks?
+state_passes = Enum.filter(edges, &(&1.label == :state_pass))
+
+# ETS write-then-read dependencies
+ets_deps = Enum.filter(edges, &match?({:ets_dep, _table}, &1.label))
+```
+
+### Concurrency: crash propagation
+
+```elixir
+graph = Reach.file_to_graph!("lib/my_supervisor.ex")
+edges = Reach.edges(graph)
+
+# Which monitors connect to which :DOWN handlers?
+Enum.filter(edges, &(&1.label == :monitor_down))
+
+# Does this process trap exits? Which handler receives them?
+Enum.filter(edges, &(&1.label == :trap_exit))
+
+# Task.async → Task.await data flow
+Enum.filter(edges, &(&1.label == :task_result))
+
+# Supervisor child startup ordering
+Enum.filter(edges, &(&1.label == :startup_order))
 ```
 
 ## Installation
@@ -68,133 +117,107 @@ def deps do
 end
 ```
 
-## Quick start
+## Building a graph
 
 ```elixir
-# From source string
-{:ok, graph} = Reach.string_to_graph("""
-def process(user, params) do
-  changeset = User.changeset(user, params)
-  if changeset.valid? do
-    Repo.update(changeset)
-  else
-    {:error, changeset}
-  end
-end
-""")
-
-# From file (auto-detects .ex/.erl)
-{:ok, graph} = Reach.file_to_graph("lib/accounts.ex")
+# From Elixir source
+{:ok, graph} = Reach.string_to_graph("def foo(x), do: x + 1")
+{:ok, graph} = Reach.file_to_graph("lib/my_module.ex")
 
 # From Erlang source
 {:ok, graph} = Reach.string_to_graph(source, language: :erlang)
+{:ok, graph} = Reach.file_to_graph("src/my_module.erl")  # auto-detected
 
-# From pre-parsed AST (useful for Credo/ExDNA integration)
+# From pre-parsed AST (for Credo/ExDNA integration)
 {:ok, ast} = Code.string_to_quoted(source)
 {:ok, graph} = Reach.ast_to_graph(ast)
 
 # From compiled BEAM bytecode (sees macro-expanded code)
 {:ok, graph} = Reach.module_to_graph(MyApp.Accounts)
+{:ok, graph} = Reach.compiled_to_graph(source)
+
+# Bang variants
+graph = Reach.file_to_graph!("lib/my_module.ex")
 ```
 
-## Querying the graph
-
-### Finding nodes
+The BEAM frontend captures code invisible to source-level analysis —
+`use GenServer` callbacks, macro-expanded `try/rescue`, generated functions:
 
 ```elixir
-# All nodes
-Reach.nodes(graph)
+# Source: only sees init/1 and handle_call/3
+Reach.string_to_graph(genserver_source)
 
-# Filter by type
-Reach.nodes(graph, type: :call)
-Reach.nodes(graph, type: :call, module: Repo)
+# BEAM: also sees child_spec/1, terminate/2, handle_info/2
+Reach.compiled_to_graph(genserver_source)
+```
+
+## API reference
+
+### Nodes
+
+```elixir
+Reach.nodes(graph)                                    # all nodes
+Reach.nodes(graph, type: :call)                       # by type
+Reach.nodes(graph, type: :call, module: Enum)         # by module
 Reach.nodes(graph, type: :call, module: Repo, function: :insert)
 
-# Get a specific node
 node = Reach.node(graph, node_id)
 node.type        #=> :call
 node.meta        #=> %{module: Repo, function: :insert, arity: 1}
 node.source_span #=> %{file: "lib/accounts.ex", start_line: 12, ...}
-node.children    #=> [%Reach.IR.Node{...}, ...]
 ```
 
 ### Slicing
 
 ```elixir
-# What affects this expression?
-Reach.backward_slice(graph, node_id)
-#=> [4, 7, 12, ...]  — list of node IDs
-
-# What does this expression affect?
-Reach.forward_slice(graph, node_id)
-
-# How does A influence B? (nodes on all paths between them)
-Reach.chop(graph, source_id, sink_id)
+Reach.backward_slice(graph, node_id)   # what affects this?
+Reach.forward_slice(graph, node_id)    # what does this affect?
+Reach.chop(graph, source_id, sink_id)  # how does A influence B?
 ```
 
-### Data flow
+### Data flow and independence
 
 ```elixir
-# Does data flow from source to sink?
 Reach.data_flows?(graph, source_id, sink_id)
-
-# Does the path pass through a sanitizer?
-Reach.passes_through?(graph, source_id, sink_id, fn node ->
-  node.type == :call and node.meta[:function] == :sanitize
-end)
-
-# Are two nodes connected by any dependence?
 Reach.depends?(graph, id_a, id_b)
-
-# Does this node's value get used anywhere?
-Reach.has_dependents?(graph, node_id)
-```
-
-### Independence
-
-```elixir
-# Can these two expressions be safely reordered?
-# Checks: no data flow between them, same control conditions,
-# no conflicting side effects
 Reach.independent?(graph, id_a, id_b)
+Reach.has_dependents?(graph, node_id)
+Reach.passes_through?(graph, source_id, sink_id, &predicate/1)
 ```
 
 ### Effects
 
 ```elixir
-Reach.pure?(node)            #=> true/false
-Reach.classify_effect(node)  #=> :pure | :io | :read | :write | :send | ...
+Reach.pure?(node)              #=> true
+Reach.classify_effect(node)    #=> :pure | :io | :read | :write | :send | :receive | :exception | :unknown
 ```
 
-Pure function database covers `Enum`, `Map`, `List`, `String`, `Keyword`,
-`Tuple`, `Integer`, `Float`, `Atom`, `MapSet`, `Range`, `Regex`, `URI`,
-`Path`, `Base`, `Bitwise`, and Erlang equivalents (`:lists`, `:maps`,
-`:string`, `:math`, etc.). `Enum.each` is correctly classified as impure.
+Covers `Enum`, `Map`, `List`, `String`, `Keyword`, `Tuple`, `Integer`,
+`Float`, `Atom`, `MapSet`, `Range`, `Regex`, `URI`, `Path`, `Base`, and
+Erlang equivalents. `Enum.each` correctly classified as impure.
 
 ### Dependencies
 
 ```elixir
-# What controls whether this node executes?
-Reach.control_deps(graph, node_id)
-#=> [{condition_node_id, {:control, :true_branch}}, ...]
-
-# What data does this node depend on?
-Reach.data_deps(graph, node_id)
-#=> [{definition_node_id, :variable_name}, ...]
+Reach.control_deps(graph, node_id)   #=> [{controller_id, label}, ...]
+Reach.data_deps(graph, node_id)      #=> [{source_id, :variable_name}, ...]
+Reach.edges(graph)                   # all dependence edges
 ```
 
 ### Interprocedural
 
 ```elixir
-# Per-function PDG
 Reach.function_graph(graph, {MyModule, :my_function, 2})
+Reach.context_sensitive_slice(graph, node_id)   # Horwitz-Reps-Binkley
+Reach.call_graph(graph)                         # {module, function, arity} vertices
+```
 
-# Context-sensitive slice (Horwitz-Reps-Binkley two-phase algorithm)
-Reach.context_sensitive_slice(graph, node_id)
+### Canonical ordering
 
-# Call graph
-cg = Reach.call_graph(graph)
-Graph.vertices(cg)  #=> [{MyModule, :foo, 1}, {MyModule, :bar, 2}, ...]
+```elixir
+Reach.canonical_order(graph, block_id)
+#=> [{node_id, %Reach.IR.Node{}}, ...] sorted so independent
+#   siblings have deterministic order regardless of source order
 ```
 
 ### Export
@@ -205,37 +228,27 @@ File.write!("graph.dot", dot)
 # dot -Tpng graph.dot -o graph.png
 ```
 
-## Three frontends
+## Edge types
 
-| Frontend | Entry point | What it sees |
-|----------|-------------|-------------|
-| **Elixir source** | `string_to_graph/2`, `file_to_graph/2` | Source-level AST, pre-expansion |
-| **Erlang source** | `string_to_graph(s, language: :erlang)`, `file_to_graph("mod.erl")` | Erlang abstract forms via `:epp` |
-| **BEAM bytecode** | `module_to_graph/2`, `compiled_to_graph/2` | Macro-expanded code, `use` callbacks, everything the compiler sees |
-
-The BEAM frontend is useful when you need to analyze code injected by macros:
-
-```elixir
-# Source-level: sees init/1 and handle_call/3 only
-{:ok, g1} = Reach.string_to_graph(genserver_source)
-
-# BEAM-level: also sees child_spec/1, terminate/2, handle_info/2
-# injected by `use GenServer`
-{:ok, g2} = Reach.compiled_to_graph(genserver_source)
-```
-
-## OTP awareness
-
-Reach understands OTP patterns as first-class dependence structures:
-
-- **GenServer state threading** — `state_read` edges from callback parameter
-  to uses, `state_pass` edges between consecutive callback returns
-- **ETS dependencies** — `ets_dep` edges between writes and reads on the same
-  table, with table name tracking
-- **Process dictionary** — `pdict_dep` edges between `Process.put` and
-  `Process.get` on the same key
-- **Message ordering** — `message_order` edges between sequential sends to
-  the same pid
+| Label | Source | Meaning |
+|-------|--------|---------|
+| `{:data, var}` | DDG | Data flows through variable `var` |
+| `:containment` | DDG | Parent expression depends on child sub-expression |
+| `{:control, label}` | CDG | Execution controlled by branch condition |
+| `:call` | SDG | Call site to callee function |
+| `:parameter_in` | SDG | Argument flows to formal parameter |
+| `:parameter_out` | SDG | Return value flows back to caller |
+| `:summary` | SDG | Shortcut: parameter flows to return value |
+| `:state_read` | OTP | GenServer callback reads state parameter |
+| `:state_pass` | OTP | State flows between consecutive callbacks |
+| `{:ets_dep, table}` | OTP | ETS write → read on same table |
+| `{:pdict_dep, key}` | OTP | Process dictionary put → get on same key |
+| `:message_order` | OTP | Sequential sends to same pid |
+| `:monitor_down` | Concurrency | `Process.monitor` → `handle_info({:DOWN, ...})` |
+| `:trap_exit` | Concurrency | `Process.flag(:trap_exit)` → `handle_info({:EXIT, ...})` |
+| `:link_exit` | Concurrency | `spawn_link` / `Process.link` → `:EXIT` handler |
+| `:task_result` | Concurrency | `Task.async` → `Task.await` data flow |
+| `:startup_order` | Concurrency | Supervisor child A starts before child B |
 
 ## Architecture
 
@@ -249,30 +262,34 @@ graph TD
     CFG --> DD
     DD["Data Dependence<br/><i>def-use chains · containment edges</i>"] --> PDG
     PDG["Program Dependence Graph<br/><i>control ∪ data</i>"] --> SDG
-    SDG["System Dependence Graph + OTP<br/><i>call/summary edges · GenServer state · ETS · messages</i>"] --> Query
+    SDG["System Dependence Graph + OTP + Concurrency<br/><i>call/summary edges · GenServer · ETS · monitors · tasks</i>"] --> Query
     Query["Query / Effects<br/><i>slicing · independence · taint · purity</i>"]
 ```
 
-## Validated on real projects
+## Performance
 
-740 files across 7 projects, zero crashes:
+Benchmarked on real projects (single-threaded, Apple M1 Pro):
 
-| Project | Files | Functions | IR Nodes | Edges |
-|---------|-------|-----------|----------|-------|
-| Phoenix | 74 | 1,405 | 46,900 | 35,801 |
-| Absinthe | 282 | 2,276 | 69,662 | 32,029 |
-| Keila | 190 | 1,292 | 46,006 | 25,781 |
-| Oban | 64 | 795 | 31,097 | 17,544 |
-| Livebook | 72 | 940 | 22,588 | 13,364 |
+| Project | Files | Functions | IR Nodes | Time | ms/file |
+|---------|-------|-----------|----------|------|---------|
+| ex_slop | 26 | 195 | 5,272 | 42ms | 1.6 |
+| ex_dna | 32 | 346 | 10,787 | 108ms | 3.4 |
+| Livebook | 72 | 940 | 22,507 | 192ms | 2.7 |
+| Oban | 64 | 813 | 31,620 | 225ms | 3.5 |
+| Keila | 190 | 1,394 | 49,674 | 361ms | 1.9 |
+| Phoenix | 74 | 1,465 | 48,667 | 435ms | 5.9 |
+| Absinthe | 282 | 2,276 | 69,281 | 477ms | 1.7 |
+
+740 files, zero crashes.
 
 ## References
 
-- Ferrante, Ottenstein, Warren — "The Program Dependence Graph and Its Use in
-  Optimization" (1987)
-- Horwitz, Reps, Binkley — "Interprocedural Slicing Using Dependence Graphs"
+- Ferrante, Ottenstein, Warren — *The Program Dependence Graph and Its Use in
+  Optimization* (1987)
+- Horwitz, Reps, Binkley — *Interprocedural Slicing Using Dependence Graphs*
   (1990)
-- Silva, Tamarit, Tomás — "System Dependence Graphs for Erlang Programs" (2012)
-- Cooper, Harvey, Kennedy — "A Simple, Fast Dominance Algorithm" (2001)
+- Silva, Tamarit, Tomás — *System Dependence Graphs for Erlang Programs* (2012)
+- Cooper, Harvey, Kennedy — *A Simple, Fast Dominance Algorithm* (2001)
 
 ## License
 
