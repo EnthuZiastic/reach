@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **Plugin system** — `Reach.Plugin` behaviour for library-specific analysis.
+  Auto-detects Phoenix, Ecto, Oban, and GenStage at runtime. Override with
+  `plugins:` option.
+- **Reach.Plugins.Ecto** — `:ecto_changeset_flow` (cast → Repo.insert),
+  `:ecto_raw_query` (variables in raw SQL), `:ecto_cast_params` (params in
+  cast calls).
+- **Reach.Plugins.Phoenix** — `:phoenix_params` (conn.params taint sources),
+  `:phoenix_action_fallback` (error → fallback controller),
+  `:phoenix_assign` (socket assign data flow),
+  `:phoenix_plug_chain` (pipe_through → route actions, project-level).
+- **Reach.Plugins.Oban** — `:oban_job_args` (job args in perform body),
+  `:oban_enqueue` (Oban.insert args → perform, project-level).
+- **Reach.Plugins.GenStage** — `:gen_stage_pipeline` (handle_demand →
+  handle_events), `:broadway_pipeline` (handle_message → handle_batch).
+
 ## 1.0.0
 
 First public release.
