@@ -87,28 +87,19 @@ defmodule Reach.Plugins.OpenTelemetry do
     end
   end
 
-  # :telemetry.execute → :telemetry.attach in same module
+  # :telemetry.execute → :telemetry.attach within the same module
   defp telemetry_event_edges(all_nodes) do
-    func_defs = Enum.filter(all_nodes, &(&1.type == :function_def))
+    executes =
+      Enum.filter(all_nodes, &telemetry_call?(&1, :execute))
 
-    Enum.flat_map(func_defs, fn func ->
-      func_nodes = IR.all_nodes(func)
+    attaches =
+      Enum.filter(all_nodes, fn n ->
+        telemetry_call?(n, :attach) or telemetry_call?(n, :attach_many)
+      end)
 
-      executes =
-        Enum.filter(func_nodes, fn n ->
-          n.type == :call and telemetry_call?(n, :execute)
-        end)
-
-      attaches =
-        Enum.filter(func_nodes, fn n ->
-          n.type == :call and telemetry_call?(n, :attach)
-        end)
-
-      for exec <- executes,
-          attach <- attaches do
-        {exec.id, attach.id, :otel_telemetry_event}
-      end
-    end)
+    for exec <- executes, attach <- attaches do
+      {exec.id, attach.id, :otel_telemetry_event}
+    end
   end
 
   # Cross-module: :telemetry.execute in module A → :telemetry.attach in module B
@@ -135,14 +126,9 @@ defmodule Reach.Plugins.OpenTelemetry do
       node.meta[:module] in [:telemetry, nil]
   end
 
-  defp ctx_module?(mod) when is_atom(mod) and mod != nil do
-    mod_str = Atom.to_string(mod)
+  @ctx_modules [OpenTelemetry.Ctx, :otel_ctx, OpenTelemetry.Ctx.TokenStorage]
 
-    mod in [OpenTelemetry.Ctx, :otel_ctx] or
-      String.contains?(mod_str, "Ctx") or
-      String.contains?(mod_str, "Context")
-  end
-
+  defp ctx_module?(mod) when is_atom(mod), do: mod in @ctx_modules
   defp ctx_module?(_), do: false
 
   defp extract_span_name(span_call) do

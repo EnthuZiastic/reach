@@ -90,7 +90,7 @@ defmodule Reach.Plugin do
   @doc false
   def run_analyze_project(plugins, modules, all_nodes, opts) do
     Enum.flat_map(plugins, fn plugin ->
-      if function_exported?(plugin, :analyze_project, 3) do
+      if Code.ensure_loaded?(plugin) and function_exported?(plugin, :analyze_project, 3) do
         plugin.analyze_project(modules, all_nodes, opts)
       else
         []

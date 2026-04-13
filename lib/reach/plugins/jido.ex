@@ -93,6 +93,8 @@ defmodule Reach.Plugins.Jido do
 
   # Memory: remember/recall as state write/read
   defp memory_edges(all_nodes) do
+    func_defs = Enum.filter(all_nodes, &(&1.type == :function_def))
+
     remembers =
       Enum.filter(all_nodes, &(&1.type == :call and &1.meta[:function] == :remember))
 
@@ -101,9 +103,14 @@ defmodule Reach.Plugins.Jido do
         {var.id, call.id, :jido_memory_write}
       end
 
+    recalls =
+      Enum.filter(all_nodes, &(&1.type == :call and &1.meta[:function] == :recall))
+
     read_edges =
-      for n <- all_nodes, n.type == :call, n.meta[:function] == :recall do
-        {n.id, n.id, :jido_memory_read}
+      for call <- recalls,
+          func <- func_defs,
+          func |> IR.all_nodes() |> Enum.any?(&(&1.id == call.id)) do
+        {call.id, func.id, :jido_memory_read}
       end
 
     write_edges ++ read_edges
@@ -191,11 +198,14 @@ defmodule Reach.Plugins.Jido do
 
   defp directive_struct?(_), do: false
 
-  defp dispatch_module?(mod) when is_atom(mod) and mod != nil do
-    mod_str = Atom.to_string(mod)
-    String.contains?(mod_str, "Dispatch") or mod == Jido.Signal.Dispatch
-  end
+  @dispatch_modules [
+    Jido.Signal.Dispatch,
+    Jido.Signal.Dispatch.Bus,
+    Jido.Signal.Dispatch.PubSub,
+    Jido.Signal.Dispatch.Named
+  ]
 
+  defp dispatch_module?(mod) when is_atom(mod), do: mod in @dispatch_modules
   defp dispatch_module?(_), do: false
 
   defp extract_action_module(call) do
