@@ -160,7 +160,7 @@ defmodule Reach.SystemDependenceTest do
 
       foo_pdg = SystemDependence.function_pdg(sdg, {nil, :foo, 1})
       assert foo_pdg != nil
-      assert %Reach.Graph{} = foo_pdg
+      assert is_map(foo_pdg)
 
       bar_pdg = SystemDependence.function_pdg(sdg, {nil, :bar, 1})
       assert bar_pdg != nil

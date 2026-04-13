@@ -43,11 +43,10 @@ defmodule Reach do
   """
 
   alias Reach.{Effects, Frontend, Query, SystemDependence}
-  alias Reach.IR.Counter
-  alias Reach.IR.Node
+  alias Reach.IR.{Counter, Node}
 
   @typedoc "A program dependence graph. Built by `string_to_graph/2`, `file_to_graph/2`, etc."
-  @opaque graph :: map()
+  @opaque graph :: struct()
 
   # --- Building ---
 
@@ -295,21 +294,37 @@ defmodule Reach do
 
   The backward slice answers: "what does this expression depend on?"
   """
-  defdelegate backward_slice(graph, node_id), to: Reach.Graph
+  def backward_slice(%SystemDependence{graph: g}, node_id) do
+    if Elixir.Graph.has_vertex?(g, node_id) do
+      Elixir.Graph.reaching(g, [node_id]) -- [node_id]
+    else
+      []
+    end
+  end
 
   @doc """
   Returns all node IDs affected by the given node (forward slice).
 
   The forward slice answers: "what does this expression influence?"
   """
-  defdelegate forward_slice(graph, node_id), to: Reach.Graph
+  def forward_slice(%SystemDependence{graph: g}, node_id) do
+    if Elixir.Graph.has_vertex?(g, node_id) do
+      Elixir.Graph.reachable(g, [node_id]) -- [node_id]
+    else
+      []
+    end
+  end
 
   @doc """
   Returns node IDs on all paths from `source` to `sink`.
 
   The chop answers: "how does A influence B?"
   """
-  defdelegate chop(graph, source, sink), to: Reach.Graph
+  def chop(graph, source, sink) do
+    fwd = forward_slice(graph, source) |> MapSet.new()
+    bwd = backward_slice(graph, sink) |> MapSet.new()
+    MapSet.intersection(fwd, bwd) |> MapSet.to_list()
+  end
 
   # --- Independence ---
 
@@ -323,8 +338,13 @@ defmodule Reach do
 
   Independent expressions can be safely reordered.
   """
-  def independent?(graph, id_x, id_y) do
-    Reach.Graph.independent?(to_graph(graph), id_x, id_y)
+  def independent?(%SystemDependence{graph: g, nodes: node_map} = sdg, id_x, id_y) do
+    data_only = build_data_graph(g)
+
+    not data_path?(data_only, id_x, id_y) and
+      not data_path?(data_only, id_y, id_x) and
+      same_control_deps?(sdg, id_x, id_y) and
+      not conflicting_effects?(node_map, id_x, id_y)
   end
 
   # --- Querying nodes ---
@@ -402,8 +422,8 @@ defmodule Reach do
   @doc """
   Returns all dependence edges in the graph.
   """
-  @spec edges(graph()) :: [Graph.Edge.t()]
-  def edges(%SystemDependence{graph: graph}), do: Elixir.Graph.edges(graph)
+  @spec edges(graph()) :: [Elixir.Graph.Edge.t()]
+  def edges(%SystemDependence{graph: g}), do: Elixir.Graph.edges(g)
 
   @doc """
   Returns the control dependencies of a node.
@@ -411,8 +431,11 @@ defmodule Reach do
   Each entry is `{controller_node_id, label}`.
   """
   @spec control_deps(graph(), Node.id()) :: [{Node.id(), term()}]
-  def control_deps(%SystemDependence{} = sdg, node_id) do
-    Reach.Graph.control_deps(to_graph(sdg), node_id)
+  def control_deps(%SystemDependence{graph: g}, node_id) do
+    g
+    |> Elixir.Graph.in_edges(node_id)
+    |> Enum.filter(fn e -> match?({:control, _}, e.label) end)
+    |> Enum.map(fn e -> {e.v1, e.label} end)
   end
 
   @doc """
@@ -421,8 +444,14 @@ defmodule Reach do
   Each entry is `{source_node_id, variable_name}`.
   """
   @spec data_deps(graph(), Node.id()) :: [{Node.id(), atom()}]
-  def data_deps(%SystemDependence{} = sdg, node_id) do
-    Reach.Graph.data_deps(to_graph(sdg), node_id)
+  def data_deps(%SystemDependence{graph: g}, node_id) do
+    g
+    |> Elixir.Graph.in_edges(node_id)
+    |> Enum.filter(fn e -> match?({:data, _}, e.label) end)
+    |> Enum.map(fn e ->
+      {:data, var} = e.label
+      {e.v1, var}
+    end)
   end
 
   @doc """
@@ -445,16 +474,47 @@ defmodule Reach do
 
   Vertices are `{module, function, arity}` tuples.
   """
-  @spec call_graph(graph()) :: Graph.t()
+  @spec call_graph(graph()) :: Elixir.Graph.t()
   def call_graph(%SystemDependence{call_graph: cg}), do: cg
 
   @doc """
   Exports the graph to DOT format for Graphviz visualization.
   """
   @spec to_dot(graph()) :: {:ok, String.t()}
-  def to_dot(%SystemDependence{graph: graph}), do: Elixir.Graph.to_dot(graph)
+  def to_dot(%SystemDependence{graph: g}), do: Elixir.Graph.to_dot(g)
 
   # --- Private ---
+
+  defp build_data_graph(graph) do
+    graph
+    |> Elixir.Graph.edges()
+    |> Enum.filter(fn e -> match?({:data, _}, e.label) or e.label == :containment end)
+    |> then(&Elixir.Graph.add_edges(Elixir.Graph.new(), &1))
+  end
+
+  defp data_path?(data_graph, from, to) do
+    if Elixir.Graph.has_vertex?(data_graph, from) and Elixir.Graph.has_vertex?(data_graph, to) do
+      Elixir.Graph.get_shortest_path(data_graph, from, to) != nil
+    else
+      false
+    end
+  end
+
+  defp conflicting_effects?(node_map, id_x, id_y) do
+    case {Map.get(node_map, id_x), Map.get(node_map, id_y)} do
+      {%{} = x, %{} = y} ->
+        Effects.conflicting?(Effects.classify(x), Effects.classify(y))
+
+      _ ->
+        true
+    end
+  end
+
+  defp same_control_deps?(sdg, id_x, id_y) do
+    deps_x = control_deps(sdg, id_x) |> MapSet.new()
+    deps_y = control_deps(sdg, id_y) |> MapSet.new()
+    MapSet.equal?(deps_x, deps_y)
+  end
 
   defp parse_string(source, :erlang, opts) do
     Frontend.Erlang.parse_string(source, opts)
@@ -476,15 +536,6 @@ defmodule Reach do
       ext when ext in [".erl", ".hrl"] -> :erlang
       _ -> :elixir
     end
-  end
-
-  defp to_graph(%SystemDependence{} = sdg) do
-    %Reach.Graph{
-      graph: sdg.graph,
-      ir: sdg.ir,
-      control_flow: sdg.call_graph,
-      nodes: sdg.nodes
-    }
   end
 
   defp module_from_path(path) do

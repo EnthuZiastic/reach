@@ -18,19 +18,7 @@ defmodule Reach.Query do
       data_flows?(graph, source_id, sink_id)
   """
 
-  alias Reach.{Effects, Graph}
-
-  defp to_graph(%Graph{} = g), do: g
-
-  defp to_graph(%Reach.SystemDependence{} = sdg) do
-    %Graph{
-      graph: sdg.graph,
-      ir: sdg.ir,
-      control_flow: sdg.call_graph,
-      nodes: sdg.nodes
-    }
-  end
-
+  alias Reach.Effects
   alias Reach.IR.Node
 
   # --- Node queries ---
@@ -47,14 +35,10 @@ defmodule Reach.Query do
   @spec nodes(term(), keyword()) :: [Node.t()]
   def nodes(graph_or_sdg, opts \\ [])
 
-  def nodes(%Graph{nodes: node_map}, opts) do
+  def nodes(%{nodes: node_map}, opts) do
     node_map
     |> Map.values()
     |> filter_nodes(opts)
-  end
-
-  def nodes(%Reach.SystemDependence{} = sdg, opts) do
-    nodes(to_graph(sdg), opts)
   end
 
   @doc """
@@ -63,8 +47,7 @@ defmodule Reach.Query do
   @spec data_flows?(term(), Node.id(), Node.id()) ::
           boolean()
   def data_flows?(graph, source_id, sink_id) do
-    graph = to_graph(graph)
-    sink_id in Graph.forward_slice(graph, source_id)
+    sink_id in Reach.forward_slice(graph, source_id)
   end
 
   @doc """
@@ -72,9 +55,7 @@ defmodule Reach.Query do
   """
   @spec controls?(term(), Node.id(), Node.id()) :: boolean()
   def controls?(graph, controller_id, target_id) do
-    graph = to_graph(graph)
-
-    Graph.control_deps(graph, target_id)
+    Reach.control_deps(graph, target_id)
     |> Enum.any?(fn {id, _label} -> id == controller_id end)
   end
 
@@ -83,10 +64,8 @@ defmodule Reach.Query do
   """
   @spec depends?(term(), Node.id(), Node.id()) :: boolean()
   def depends?(graph, id_a, id_b) do
-    graph = to_graph(graph)
-
-    id_b in Graph.forward_slice(graph, id_a) or
-      id_a in Graph.forward_slice(graph, id_b)
+    id_b in Reach.forward_slice(graph, id_a) or
+      id_a in Reach.forward_slice(graph, id_b)
   end
 
   @doc """
@@ -94,8 +73,7 @@ defmodule Reach.Query do
   """
   @spec has_dependents?(term(), Node.id()) :: boolean()
   def has_dependents?(graph, node_id) do
-    graph = to_graph(graph)
-    Graph.forward_slice(graph, node_id) != []
+    Reach.forward_slice(graph, node_id) != []
   end
 
   @doc """
@@ -109,11 +87,10 @@ defmodule Reach.Query do
           (Node.t() -> boolean())
         ) :: boolean()
   def passes_through?(graph, source_id, sink_id, predicate) do
-    graph = to_graph(graph)
-    path_nodes = Graph.chop(graph, source_id, sink_id)
+    path_nodes = Reach.chop(graph, source_id, sink_id)
 
     Enum.any?(path_nodes, fn id ->
-      case Graph.node(graph, id) do
+      case Map.get(graph.nodes, id) do
         nil -> false
         node -> predicate.(node)
       end
@@ -125,7 +102,7 @@ defmodule Reach.Query do
   """
   @spec returns?(term(), Node.id()) :: boolean()
   def returns?(graph, node_id) do
-    %Graph{control_flow: control_flow} = to_graph(graph)
+    control_flow = graph.call_graph
 
     if Elixir.Graph.has_vertex?(control_flow, node_id) do
       control_flow

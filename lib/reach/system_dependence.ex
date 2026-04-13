@@ -8,7 +8,7 @@ defmodule Reach.SystemDependence do
 
   @type t :: %__MODULE__{
           graph: Graph.t(),
-          function_pdgs: %{function_id() => Reach.Graph.t()},
+          function_pdgs: %{function_id() => map()},
           call_graph: Graph.t(),
           ir: [Node.t()],
           nodes: %{Node.id() => Node.t()}
@@ -78,7 +78,7 @@ defmodule Reach.SystemDependence do
   @doc """
   Returns the PDG for a specific function.
   """
-  @spec function_pdg(t(), function_id()) :: Reach.Graph.t() | nil
+  @spec function_pdg(t(), function_id()) :: map() | nil
   def function_pdg(%__MODULE__{function_pdgs: pdgs}, function_id) do
     Map.get(pdgs, function_id)
   end
@@ -104,12 +104,7 @@ defmodule Reach.SystemDependence do
 
       merged = Graph.add_edges(control_deps, Graph.edges(data_deps))
 
-      pdg = %Reach.Graph{
-        graph: merged,
-        ir: [func_node],
-        control_flow: flow,
-        nodes: node_map
-      }
+      pdg = %{graph: merged, nodes: node_map}
 
       {func_id, pdg}
     end)

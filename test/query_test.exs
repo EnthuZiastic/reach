@@ -1,11 +1,10 @@
 defmodule Reach.QueryTest do
   use ExUnit.Case, async: true
 
-  alias Reach.{Graph, IR, Query}
+  alias Reach.Query
 
   defp build_graph(source) do
-    nodes = IR.from_string!(source)
-    Graph.build(nodes)
+    Reach.string_to_graph!(source)
   end
 
   describe "nodes/2" do
@@ -45,7 +44,7 @@ defmodule Reach.QueryTest do
         end
         """)
 
-      all = IR.all_nodes(graph.ir)
+      all = Reach.IR.all_nodes(graph.ir)
       x_nodes = Enum.filter(all, &(&1.type == :var and &1.meta[:name] == :x))
       y_nodes = Enum.filter(all, &(&1.type == :var and &1.meta[:name] == :y))
 
@@ -69,11 +68,14 @@ defmodule Reach.QueryTest do
     test "definition with later use has dependents" do
       graph =
         build_graph("""
-        x = 1
-        y = x + 1
+        def foo do
+          x = 1
+          y = x + 1
+          y
+        end
         """)
 
-      all = IR.all_nodes(graph.ir)
+      all = Reach.IR.all_nodes(graph.ir)
 
       x_match =
         Enum.find(all, fn n ->
@@ -88,35 +90,12 @@ defmodule Reach.QueryTest do
     end
   end
 
-  describe "works with SystemDependence" do
-    test "nodes/2 accepts SystemDependence struct" do
-      {:ok, sdg} =
-        Reach.SystemDependence.from_string("""
-        def foo(x), do: x + 1
-        """)
-
-      all = Query.nodes(sdg)
-      assert all != []
-    end
-
-    test "has_dependents?/2 accepts SystemDependence struct" do
-      {:ok, sdg} =
-        Reach.SystemDependence.from_string("""
-        def foo(x), do: x + 1
-        """)
-
-      all = Query.nodes(sdg)
-      node = hd(all)
-      assert is_boolean(Query.has_dependents?(sdg, node.id))
-    end
-  end
-
   describe "pure?" do
     test "delegates to Effects" do
-      [node] = IR.from_string!("42")
+      [node] = Reach.IR.from_string!("42")
       assert Query.pure?(node)
 
-      [node] = IR.from_string!("IO.puts(x)")
+      [node] = Reach.IR.from_string!("IO.puts(x)")
       refute Query.pure?(node)
     end
   end

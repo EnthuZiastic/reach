@@ -273,7 +273,7 @@ defmodule ReachTest do
         """)
 
       foo = Reach.function_graph(graph, {nil, :foo, 1})
-      assert %Reach.Graph{} = foo
+      assert is_map(foo)
 
       assert Reach.function_graph(graph, {nil, :nope, 0}) == nil
     end
