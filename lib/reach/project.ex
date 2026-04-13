@@ -23,11 +23,11 @@ defmodule Reach.Project do
   alias Reach.{Frontend, IR}
 
   @type t :: %__MODULE__{
-          modules: %{module() => Reach.SystemDependence.t()},
+          modules: %{module() => map()},
           graph: Graph.t(),
           nodes: %{IR.Node.id() => IR.Node.t()},
           call_graph: Graph.t(),
-          summaries: %{Reach.CallGraph.function_id() => map()}
+          summaries: %{{module(), atom(), non_neg_integer()} => map()}
         }
 
   @enforce_keys [:modules, :graph, :nodes, :call_graph]
@@ -76,7 +76,7 @@ defmodule Reach.Project do
   Returns a map of `{module, function, arity} => %{param_index => flows_to_return?}`.
   These summaries can be passed as the `:summaries` option to `from_sources/2`.
   """
-  @spec summarize_dependency(module()) :: %{Reach.CallGraph.function_id() => map()}
+  @spec summarize_dependency(module()) :: %{{module(), atom(), non_neg_integer()} => map()}
   def summarize_dependency(module) do
     case Frontend.BEAM.from_module(module) do
       {:ok, ir_nodes} ->

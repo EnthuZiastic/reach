@@ -76,7 +76,7 @@ First public release.
   plus Erlang equivalents.
 - `Enum.each` correctly classified as impure.
 - **Type-aware inference** — functions not in the hardcoded database are
-  auto-classified by extracting `@spec` via `Code.Typespec.fetch_specs/1`.
+  auto-classified by extracting `@spec` via `Code.Typespec.fetch_specs`.
   Functions returning only data types are inferred as pure; functions returning
   `:ok` are left as unknown.
 

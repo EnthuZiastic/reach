@@ -61,13 +61,14 @@ defmodule Reach.MixProject do
       main: "Reach",
       extras: [
         "README.md",
+        "CHANGELOG.md",
         "LICENSE"
       ],
       groups_for_modules: [
-        "Public API": [Reach],
+        "Public API": [Reach, Reach.Project],
         IR: [Reach.IR, Reach.IR.Node],
-        Analysis: [Reach.Effects, Reach.Query],
-        Frontends: [Reach.Frontend.Elixir, Reach.Frontend.Erlang, Reach.Frontend.BEAM]
+        Analysis: [Reach.Effects],
+        Frontends: [Reach.Frontend.Elixir, Reach.Frontend.Erlang]
       ],
       source_url: @source_url,
       source_ref: "master"
@@ -78,7 +79,7 @@ defmodule Reach.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE .formatter.exs)
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs)
     ]
   end
 end
