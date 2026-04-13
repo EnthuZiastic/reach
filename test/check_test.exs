@@ -160,6 +160,40 @@ defmodule ExPDG.CheckTest do
   end
 
   describe "UnusedDefinition false positive avoidance" do
+    test "does not flag variable used via dot access" do
+      graph =
+        build_graph("""
+        def foo do
+          result = compute()
+          result.value
+        end
+        """)
+
+      unused =
+        Enum.filter(UnusedDefinition.run(graph, []), fn d ->
+          d.message =~ "result"
+        end)
+
+      assert unused == []
+    end
+
+    test "does not flag variable used via chained dot access" do
+      graph =
+        build_graph("""
+        def foo do
+          report = analyze()
+          report.stats.time
+        end
+        """)
+
+      unused =
+        Enum.filter(UnusedDefinition.run(graph, []), fn d ->
+          d.message =~ "report"
+        end)
+
+      assert unused == []
+    end
+
     test "does not flag variable used on next line" do
       graph =
         build_graph("""

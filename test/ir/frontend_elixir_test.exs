@@ -398,6 +398,42 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
   end
 
+  describe "dot access on variables" do
+    test "result.field makes result a child var node" do
+      [node] = IR.from_string!("result.issues")
+      assert %Node{type: :call, meta: %{function: :issues}} = node
+      [receiver] = node.children
+      assert %Node{type: :var, meta: %{name: :result}} = receiver
+    end
+
+    test "map.key preserves variable as child" do
+      [node] = IR.from_string!("user.name")
+      assert %Node{type: :call} = node
+      [receiver] = node.children
+      assert %Node{type: :var, meta: %{name: :user}} = receiver
+    end
+
+    test "chained dot access: a.b.c" do
+      [node] = IR.from_string!("a.b.c")
+      assert %Node{type: :call, meta: %{function: :c}} = node
+      all = IR.all_nodes(node)
+      vars = Enum.filter(all, &(&1.type == :var and &1.meta[:name] == :a))
+      assert vars != []
+    end
+
+    test "chained access result.stats.field preserves variable" do
+      nodes = IR.from_string!("result = foo()\nresult.stats.time\n")
+      all = IR.all_nodes(nodes)
+      vars = Enum.filter(all, &(&1.type == :var and &1.meta[:name] == :result))
+      assert length(vars) == 2
+    end
+
+    test "module call still resolves module name" do
+      [node] = IR.from_string!("Enum.map(list, fun)")
+      assert %Node{type: :call, meta: %{module: Enum}} = node
+    end
+  end
+
   describe "metaprogramming" do
     test "unquote in function head doesn't crash" do
       assert {:ok, _} =

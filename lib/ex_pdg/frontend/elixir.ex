@@ -644,12 +644,13 @@ defmodule ExPDG.Frontend.Elixir do
 
   # General function call: local or remote
   defp translate({:., meta, [module, fun_name]}, counter, file) when is_atom(fun_name) do
-    # This is the dot access form, actual call is the parent
-    # We translate this as part of the call handler below
+    {receiver_children, resolved_module} = translate_receiver(module, counter, file)
+
     %Node{
       id: Counter.next(counter),
       type: :call,
-      meta: %{module: module_name(module), function: fun_name, kind: :remote},
+      meta: %{module: resolved_module, function: fun_name, kind: :remote},
+      children: receiver_children,
       source_span: span_from_meta(meta, file)
     }
   end
@@ -658,17 +659,18 @@ defmodule ExPDG.Frontend.Elixir do
   defp translate({{:., meta, [module, fun_name]}, call_meta, args}, counter, file)
        when is_atom(fun_name) do
     arg_nodes = Enum.map(args, &translate(&1, counter, file))
+    {receiver_children, resolved_module} = translate_receiver(module, counter, file)
 
     %Node{
       id: Counter.next(counter),
       type: :call,
       meta: %{
-        module: module_name(module),
+        module: resolved_module,
         function: fun_name,
         arity: length(args),
         kind: :remote
       },
-      children: arg_nodes,
+      children: receiver_children ++ arg_nodes,
       source_span: span_from_meta(call_meta || meta, file)
     }
   end
@@ -810,6 +812,21 @@ defmodule ExPDG.Frontend.Elixir do
   defp fun_params({:when, _, [{_, _, args} | _]}) when is_list(args), do: args
   defp fun_params({_, _, args}) when is_list(args), do: args
   defp fun_params(_), do: []
+
+  defp translate_receiver({name, _meta, context} = var_ast, counter, file)
+       when is_atom(name) and is_atom(context) do
+    receiver_node = translate(var_ast, counter, file)
+    {[receiver_node], name}
+  end
+
+  defp translate_receiver({{:., _, _}, _, _} = call_ast, counter, file) do
+    receiver_node = translate(call_ast, counter, file)
+    {[receiver_node], nil}
+  end
+
+  defp translate_receiver(module, _counter, _file) do
+    {[], module_name(module)}
+  end
 
   defp module_name({:__aliases__, _, parts}), do: Module.concat(parts)
   defp module_name(atom) when is_atom(atom), do: atom
