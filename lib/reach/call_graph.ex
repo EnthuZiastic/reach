@@ -78,14 +78,11 @@ defmodule Reach.CallGraph do
   end
 
   defp collect_call_sites(all_nodes) do
-    func_defs =
-      for node <- all_nodes,
-          node.type == :function_def,
-          do: node
+    parent_map = build_parent_map(all_nodes)
 
     for call_node <- all_nodes,
         call_node.type == :call,
-        caller_def = find_parent_function(func_defs, call_node.id, all_nodes),
+        caller_def = Map.get(parent_map, call_node.id),
         caller_def != nil do
       caller_id = {nil, caller_def.meta[:name], caller_def.meta[:arity]}
       callee_id = call_target(call_node)
@@ -93,19 +90,17 @@ defmodule Reach.CallGraph do
     end
   end
 
-  defp call_target(%Node{type: :call, meta: meta}) do
-    {meta[:module], meta[:function], meta[:arity] || 0}
-  end
+  defp build_parent_map(all_nodes) do
+    func_defs = Enum.filter(all_nodes, &(&1.type == :function_def))
 
-  defp find_parent_function(func_defs, node_id, _all_nodes) do
-    Enum.find(func_defs, fn func_def ->
-      descendant?(func_def, node_id)
+    Enum.reduce(func_defs, %{}, fn func_def, acc ->
+      func_def
+      |> Reach.IR.all_nodes()
+      |> Enum.reduce(acc, &Map.put_new(&2, &1.id, func_def))
     end)
   end
 
-  defp descendant?(%Node{id: id}, target_id) when id == target_id, do: true
-
-  defp descendant?(%Node{children: children}, target_id) do
-    Enum.any?(children, &descendant?(&1, target_id))
+  defp call_target(%Node{type: :call, meta: meta}) do
+    {meta[:module], meta[:function], meta[:arity] || 0}
   end
 end
