@@ -359,6 +359,14 @@ defmodule Reach.Effects do
 
   # --- Pure function database ---
 
+  @doc false
+  def pure_modules, do: @pure_modules
+
+  @doc false
+  def pure_call?(module, function, arity) do
+    classify_pure(module, function, arity) != nil
+  end
+
   defp pure_module?(module), do: module in @pure_modules
 
   defp pure_function?(module, function, arity) do

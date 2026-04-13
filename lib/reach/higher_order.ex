@@ -3,61 +3,44 @@ defmodule Reach.HigherOrder do
 
   alias Reach.IR.Node
 
-  # Which params flow to the return value for known higher-order functions.
-  # {module, function, arity} => [param_indices_that_flow]
-  @catalog %{
-    {Enum, :map, 2} => [0, 1],
-    {Enum, :flat_map, 2} => [0, 1],
-    {Enum, :filter, 2} => [0, 1],
-    {Enum, :reject, 2} => [0, 1],
-    {Enum, :reduce, 3} => [0, 1, 2],
-    {Enum, :scan, 3} => [0, 1, 2],
-    {Enum, :sort_by, 2} => [0, 1],
-    {Enum, :sort_by, 3} => [0, 1],
-    {Enum, :group_by, 2} => [0, 1],
-    {Enum, :group_by, 3} => [0, 1],
-    {Enum, :map_join, 3} => [0, 2],
-    {Enum, :map_reduce, 3} => [0, 1, 2],
-    {Enum, :with_index, 1} => [0],
-    {Enum, :with_index, 2} => [0],
-    {Enum, :zip_with, 2} => [0, 1],
-    {Enum, :map_intersperse, 3} => [0, 1],
-    {Enum, :map_every, 3} => [0, 2],
-    {Enum, :find, 2} => [0],
-    {Enum, :find, 3} => [0, 2],
-    {Enum, :find_value, 2} => [0, 1],
-    {Enum, :count, 2} => [0],
-    {Enum, :any?, 2} => [0],
-    {Enum, :all?, 2} => [0],
-    {Enum, :min_by, 2} => [0],
-    {Enum, :max_by, 2} => [0],
-    {Enum, :uniq_by, 2} => [0],
-    {Enum, :dedup_by, 2} => [0],
-    {Stream, :map, 2} => [0, 1],
-    {Stream, :filter, 2} => [0, 1],
-    {Stream, :flat_map, 2} => [0, 1],
-    {Stream, :reject, 2} => [0, 1],
-    {Stream, :scan, 3} => [0, 1, 2],
-    {Stream, :with_index, 1} => [0],
-    {Task, :async, 1} => [0],
-    {Task, :await, 1} => [0]
-  }
+  @catalog (for mod <- Reach.Effects.pure_modules(), reduce: %{} do
+              acc ->
+                summaries = Reach.Project.summarize_dependency(mod)
+
+                entries =
+                  for {{^mod, name, arity}, flows} <- summaries,
+                      flowing = for({idx, true} <- flows, do: idx),
+                      flowing != [],
+                      into: %{} do
+                    {{mod, name, arity}, flowing}
+                  end
+
+                Map.merge(acc, entries)
+            end)
 
   @doc """
   Adds synthetic data-flow edges for known higher-order function calls.
+
+  Only adds edges for pure calls — impure functions (like `Enum.each`)
+  use params for side effects, not return value production.
   """
   @spec add_edges(Graph.t(), [Node.t()]) :: Graph.t()
   def add_edges(graph, all_nodes) do
     all_nodes
     |> Enum.filter(&(&1.type == :call))
-    |> Enum.reduce(graph, fn call, g ->
-      key = {call.meta[:module], call.meta[:function], call.meta[:arity] || 0}
+    |> Enum.reduce(graph, fn call, g -> maybe_add_flow(g, call) end)
+  end
 
-      case Map.get(@catalog, key) do
-        nil -> g
-        flowing_params -> add_synthetic_flows(g, call, flowing_params)
-      end
-    end)
+  defp maybe_add_flow(graph, call) do
+    key = {call.meta[:module], call.meta[:function], call.meta[:arity] || 0}
+
+    with flowing when flowing != nil <- Map.get(@catalog, key),
+         true <-
+           Reach.Effects.pure_call?(call.meta[:module], call.meta[:function], call.meta[:arity]) do
+      add_synthetic_flows(graph, call, flowing)
+    else
+      _ -> graph
+    end
   end
 
   defp add_synthetic_flows(graph, call_node, flowing_params) do
@@ -69,10 +52,12 @@ defmodule Reach.HigherOrder do
           g
 
         arg ->
-          g
-          |> Graph.add_vertex(arg.id)
-          |> Graph.add_vertex(call_node.id)
-          |> Graph.add_edge(arg.id, call_node.id, label: :higher_order)
+          Graph.add_edge(
+            Graph.add_vertex(Graph.add_vertex(g, arg.id), call_node.id),
+            arg.id,
+            call_node.id,
+            label: :higher_order
+          )
       end
     end)
   end
