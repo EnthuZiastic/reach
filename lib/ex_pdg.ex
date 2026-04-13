@@ -1,8 +1,8 @@
 defmodule ExPDG do
   @moduledoc """
-  Program Dependence Graph for BEAM languages.
+  Program Dependence Graph for Elixir and Erlang.
 
-  ExPDG analyzes Elixir source code and builds a graph that captures
+  ExPDG analyzes Elixir and Erlang source code and builds a graph that captures
   **what depends on what**: which expressions produce values consumed
   by others (data dependence), and which expressions control whether
   others execute (control dependence).
@@ -105,6 +105,54 @@ defmodule ExPDG do
   @spec file_to_graph!(Path.t(), keyword()) :: graph()
   def file_to_graph!(path, opts \\ []) do
     case file_to_graph(path, opts) do
+      {:ok, graph} -> graph
+      {:error, reason} -> raise "ExPDG error: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Parses an Erlang source string and builds a program dependence graph.
+  """
+  @spec erlang_string_to_graph(String.t(), keyword()) :: {:ok, graph()} | {:error, term()}
+  def erlang_string_to_graph(source, opts \\ []) do
+    case ExPDG.IR.from_erlang_string(source, opts) do
+      {:ok, nodes} -> {:ok, SystemDependence.build(nodes, opts)}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Same as `erlang_string_to_graph/2` but raises on error.
+  """
+  @spec erlang_string_to_graph!(String.t(), keyword()) :: graph()
+  def erlang_string_to_graph!(source, opts \\ []) do
+    case erlang_string_to_graph(source, opts) do
+      {:ok, graph} -> graph
+      {:error, reason} -> raise "ExPDG Erlang parse error: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Reads an Erlang source file and builds a program dependence graph.
+  """
+  @spec erlang_file_to_graph(Path.t(), keyword()) :: {:ok, graph()} | {:error, term()}
+  def erlang_file_to_graph(path, opts \\ []) do
+    case ExPDG.IR.from_erlang_file(path, opts) do
+      {:ok, nodes} ->
+        opts = Keyword.put_new(opts, :file, path)
+        {:ok, SystemDependence.build(nodes, opts)}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  @doc """
+  Same as `erlang_file_to_graph/2` but raises on error.
+  """
+  @spec erlang_file_to_graph!(Path.t(), keyword()) :: graph()
+  def erlang_file_to_graph!(path, opts \\ []) do
+    case erlang_file_to_graph(path, opts) do
       {:ok, graph} -> graph
       {:error, reason} -> raise "ExPDG error: #{inspect(reason)}"
     end

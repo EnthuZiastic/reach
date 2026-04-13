@@ -20,6 +20,18 @@ defmodule ExPDG.IR do
   defdelegate from_string!(source, opts \\ []), to: ExPDG.Frontend.Elixir, as: :parse!
 
   @doc """
+  Parses an Erlang source file into IR nodes.
+  """
+  @spec from_erlang_file(Path.t(), keyword()) :: {:ok, [Node.t()]} | {:error, term()}
+  defdelegate from_erlang_file(path, opts \\ []), to: ExPDG.Frontend.Erlang, as: :parse_file
+
+  @doc """
+  Parses an Erlang source string into IR nodes.
+  """
+  @spec from_erlang_string(String.t(), keyword()) :: {:ok, [Node.t()]} | {:error, term()}
+  defdelegate from_erlang_string(source, opts \\ []), to: ExPDG.Frontend.Erlang, as: :parse_string
+
+  @doc """
   Collects all nodes in the IR tree (pre-order depth-first).
   """
   @spec all_nodes(Node.t() | [Node.t()]) :: [Node.t()]

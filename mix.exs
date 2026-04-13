@@ -14,7 +14,7 @@ defmodule ExPDG.MixProject do
         plt_add_apps: [:mix]
       ],
       name: "ExPDG",
-      description: "Program Dependence Graph for BEAM languages"
+      description: "Program Dependence Graph for Elixir and Erlang"
     ]
   end
 
