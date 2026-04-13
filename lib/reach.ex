@@ -342,10 +342,28 @@ defmodule Reach do
   def independent?(%SystemDependence{graph: g, nodes: node_map} = sdg, id_x, id_y) do
     data_only = build_data_graph(g)
 
-    not data_path?(data_only, id_x, id_y) and
-      not data_path?(data_only, id_y, id_x) and
+    ids_x = descendant_ids(node_map, id_x)
+    ids_y = descendant_ids(node_map, id_y)
+
+    not any_data_path?(data_only, ids_x, ids_y) and
+      not any_data_path?(data_only, ids_y, ids_x) and
       same_control_deps?(sdg, id_x, id_y) and
       not conflicting_effects?(node_map, id_x, id_y)
+  end
+
+  defp descendant_ids(node_map, id) do
+    case Map.get(node_map, id) do
+      nil -> [id]
+      node -> [id | Reach.IR.all_nodes(node) |> Enum.map(& &1.id)]
+    end
+  end
+
+  defp any_data_path?(data_only, from_ids, to_ids) do
+    Enum.any?(from_ids, fn from ->
+      Enum.any?(to_ids, fn to ->
+        from != to and data_path?(data_only, from, to)
+      end)
+    end)
   end
 
   # --- Querying nodes ---
@@ -580,6 +598,7 @@ defmodule Reach do
     |> nodes()
     |> Enum.filter(fn node ->
       node.type in [:call, :binary_op, :unary_op, :match, :var] and
+        not attribute_or_typespec?(node) and
         pure?(node) and
         not MapSet.member?(alive_ids, node.id)
     end)
@@ -680,6 +699,12 @@ defmodule Reach do
   defp match_label?({tag, _}, tag) when is_atom(tag), do: true
   defp match_label?(_, _), do: false
 
+  defp attribute_or_typespec?(%{type: :call, meta: %{function: f}})
+       when f in [:@, :__aliases__],
+       do: true
+
+  defp attribute_or_typespec?(_), do: false
+
   defp filter_nodes(nodes, []), do: nodes
 
   defp filter_nodes(nodes, [{:type, type} | rest]) do
@@ -705,7 +730,9 @@ defmodule Reach do
   defp build_data_graph(graph) do
     graph
     |> Elixir.Graph.edges()
-    |> Enum.filter(fn e -> match?({:data, _}, e.label) or e.label == :containment end)
+    |> Enum.filter(fn e ->
+      match?({:data, _}, e.label) or e.label in [:containment, :match_binding, :higher_order]
+    end)
     |> then(&Elixir.Graph.add_edges(Elixir.Graph.new(), &1))
   end
 

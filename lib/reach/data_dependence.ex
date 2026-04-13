@@ -19,7 +19,7 @@ defmodule Reach.DataDependence do
     scoped_defs = build_scoped_def_map(all, bindings, scope_map)
 
     graph = build_def_use_edges(all, bindings, scoped_defs, scope_map)
-    add_containment_edges(graph, all)
+    graph |> add_containment_edges(all) |> add_match_binding_edges(all)
   end
 
   @doc """
@@ -155,6 +155,27 @@ defmodule Reach.DataDependence do
     :match,
     :comprehension
   ]
+
+  defp add_match_binding_edges(graph, all_nodes) do
+    all_nodes
+    |> Enum.filter(&(&1.type == :match and length(&1.children) == 2))
+    |> Enum.reduce(graph, fn match_node, g ->
+      [lhs, rhs] = match_node.children
+      connect_rhs_to_defs(g, rhs, lhs)
+    end)
+  end
+
+  defp connect_rhs_to_defs(graph, rhs, lhs) do
+    lhs
+    |> Reach.IR.all_nodes()
+    |> Enum.filter(&(&1.type == :var and &1.meta[:binding_role] == :definition))
+    |> Enum.reduce(graph, fn def_var, g ->
+      g
+      |> Graph.add_vertex(rhs.id)
+      |> Graph.add_vertex(def_var.id)
+      |> Graph.add_edge(rhs.id, def_var.id, label: :match_binding)
+    end)
+  end
 
   defp value_depends_on_children?(%Node{type: type}) when type in @value_types, do: true
   defp value_depends_on_children?(_), do: false
