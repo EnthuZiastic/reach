@@ -56,7 +56,7 @@ defmodule Reach.Graph do
           {flow, control_deps, data_deps}
       end
 
-    merged = Reach.GraphUtils.merge(control_deps, data_deps)
+    merged = Graph.add_edges(control_deps, Graph.edges(data_deps))
 
     data_only = build_data_graph(merged)
 

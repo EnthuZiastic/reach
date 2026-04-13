@@ -48,8 +48,8 @@ defmodule Reach.SystemDependence do
 
     otp_edges = OTP.analyze(ir_nodes, all_nodes: all_nodes)
     concurrency_edges = Reach.Concurrency.analyze(ir_nodes, all_nodes: all_nodes)
-    graph = Reach.GraphUtils.merge(graph, otp_edges)
-    graph = Reach.GraphUtils.merge(graph, concurrency_edges)
+    graph = Graph.add_edges(graph, Graph.edges(otp_edges))
+    graph = Graph.add_edges(graph, Graph.edges(concurrency_edges))
 
     %__MODULE__{
       graph: graph,
@@ -102,7 +102,7 @@ defmodule Reach.SystemDependence do
       all_func_nodes = IR.all_nodes(func_node)
       node_map = Map.new(all_func_nodes, fn n -> {n.id, n} end)
 
-      merged = Reach.GraphUtils.merge(control_deps, data_deps)
+      merged = Graph.add_edges(control_deps, Graph.edges(data_deps))
 
       pdg = %Reach.Graph{
         graph: merged,
