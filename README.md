@@ -25,15 +25,13 @@ Reach.taint_analysis(graph,
 #=> [%{source: ..., sink: ..., path: [...], sanitized: false}]
 ```
 
-### Code quality: dead code and useless expressions
+### Code quality: dead code detection
 
 ```elixir
 graph = Reach.file_to_graph!("lib/accounts.ex")
 
-for node <- Reach.nodes(graph, type: :call),
-    Reach.pure?(node),
-    not Reach.has_dependents?(graph, node.id) do
-  IO.warn("Pure call result unused at #{inspect(node.source_span)}")
+for node <- Reach.dead_code(graph) do
+  IO.warn("Dead code at \#{inspect(node.source_span)}: \#{node.type}")
 end
 ```
 
@@ -219,6 +217,13 @@ Reach.taint_analysis(graph,
 #=> [%{source: node, sink: node, path: [node_id, ...], sanitized: boolean}]
 ```
 
+### Dead code
+
+```elixir
+Reach.dead_code(graph)
+#=> [%Reach.IR.Node{type: :call, meta: %{function: :upcase}}, ...]
+```
+
 ### Canonical ordering
 
 ```elixir
@@ -272,6 +277,10 @@ File.write!("graph.dot", dot)
 | `:link_exit` | Concurrency | `spawn_link` / `Process.link` → `:EXIT` handler |
 | `:task_result` | Concurrency | `Task.async` → `Task.await` data flow |
 | `:startup_order` | Concurrency | Supervisor child A starts before child B |
+| `{:message_content, tag}` | OTP | `send(pid, {tag, data})` payload → handler pattern vars |
+| `:call_reply` | OTP | `{:reply, value, state}` → `GenServer.call` return |
+| `:match_binding` | DDG | Match RHS flows to LHS definition var |
+| `:higher_order` | SDG | Argument flows through higher-order function to result |
 
 ## Architecture
 
@@ -295,13 +304,13 @@ Benchmarked on real projects (single-threaded, Apple M1 Pro):
 
 | Project | Files | Functions | IR Nodes | Time | ms/file |
 |---------|-------|-----------|----------|------|---------|
-| ex_slop | 26 | 195 | 5,272 | 42ms | 1.6 |
-| ex_dna | 32 | 346 | 10,787 | 108ms | 3.4 |
-| Livebook | 72 | 940 | 22,507 | 192ms | 2.7 |
-| Oban | 64 | 813 | 31,620 | 225ms | 3.5 |
-| Keila | 190 | 1,394 | 49,674 | 361ms | 1.9 |
-| Phoenix | 74 | 1,465 | 48,667 | 435ms | 5.9 |
-| Absinthe | 282 | 2,276 | 69,281 | 477ms | 1.7 |
+| ex_slop | 26 | 109 | 5,186 | 36ms | 1.4 |
+| ex_dna | 32 | 208 | 10,649 | 87ms | 2.7 |
+| Livebook | 72 | 589 | 22,156 | 160ms | 2.2 |
+| Oban | 64 | 606 | 31,413 | 195ms | 3.0 |
+| Keila | 190 | 1,074 | 49,354 | 282ms | 1.5 |
+| Phoenix | 74 | 1,090 | 48,292 | 333ms | 4.5 |
+| Absinthe | 282 | 1,411 | 68,416 | 375ms | 1.3 |
 
 740 files, zero crashes.
 
