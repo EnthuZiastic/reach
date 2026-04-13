@@ -52,6 +52,15 @@ defmodule Reach.SystemDependence do
     graph = Graph.add_edges(graph, Graph.edges(otp_edges))
     graph = Graph.add_edges(graph, Graph.edges(concurrency_edges))
 
+    plugins = Reach.Plugin.resolve(opts)
+    plugin_edges = Reach.Plugin.run_analyze(plugins, all_nodes, opts)
+
+    graph =
+      Graph.add_edges(
+        graph,
+        Enum.map(plugin_edges, fn {v1, v2, label} -> Graph.Edge.new(v1, v2, label: label) end)
+      )
+
     %__MODULE__{
       graph: graph,
       function_pdgs: function_pdgs,

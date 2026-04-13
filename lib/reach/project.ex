@@ -268,6 +268,17 @@ defmodule Reach.Project do
         Graph.add_edges(acc, Graph.edges(sdg.call_graph))
       end)
 
+    # Run project-level plugins
+    plugins = Reach.Plugin.resolve(opts)
+    all_project_nodes = Map.values(merged_nodes)
+    plugin_edges = Reach.Plugin.run_analyze_project(plugins, module_sdgs, all_project_nodes, opts)
+
+    merged_graph =
+      Graph.add_edges(
+        merged_graph,
+        Enum.map(plugin_edges, fn {v1, v2, label} -> Graph.Edge.new(v1, v2, label: label) end)
+      )
+
     %__MODULE__{
       modules: module_sdgs,
       graph: merged_graph,
