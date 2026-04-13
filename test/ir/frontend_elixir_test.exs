@@ -398,6 +398,41 @@ defmodule ExPDG.Frontend.ElixirTest do
     end
   end
 
+  describe "metaprogramming" do
+    test "unquote in function head doesn't crash" do
+      assert {:ok, _} =
+               IR.from_string("""
+               defmodule M do
+                 defmacro __using__(_) do
+                   quote do
+                     def unquote(:my_func)(x), do: x
+                   end
+                 end
+               end
+               """)
+    end
+
+    test "module attribute @ doesn't crash" do
+      [node] =
+        IR.from_string!("""
+        defmodule M do
+          @moduledoc "hello"
+        end
+        """)
+
+      assert %Node{type: :module_def} = node
+    end
+
+    test "use directive doesn't crash" do
+      assert {:ok, _} =
+               IR.from_string("""
+               defmodule M do
+                 use GenServer
+               end
+               """)
+    end
+  end
+
   describe "source spans" do
     test "preserves line and column" do
       [node] = IR.from_string!("x = 1")

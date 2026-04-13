@@ -176,6 +176,44 @@ defmodule ExPDG.GraphTest do
     end
   end
 
+  describe "works with SystemDependence" do
+    test "backward_slice accepts SystemDependence" do
+      {:ok, sdg} =
+        ExPDG.SystemDependence.from_string("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
+
+      all = ExPDG.IR.all_nodes(sdg.ir)
+      node = Enum.find(all, &(&1.type == :var))
+
+      if node do
+        result = ExPDG.Graph.backward_slice(sdg, node.id)
+        assert is_list(result)
+      end
+    end
+
+    test "forward_slice accepts SystemDependence" do
+      {:ok, sdg} =
+        ExPDG.SystemDependence.from_string("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
+
+      all = ExPDG.IR.all_nodes(sdg.ir)
+      node = Enum.find(all, &(&1.type == :var))
+
+      if node do
+        result = ExPDG.Graph.forward_slice(sdg, node.id)
+        assert is_list(result)
+      end
+    end
+  end
+
   describe "DOT export" do
     test "produces valid DOT" do
       {:ok, pdg} =

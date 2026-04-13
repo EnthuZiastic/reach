@@ -88,6 +88,29 @@ defmodule ExPDG.QueryTest do
     end
   end
 
+  describe "works with SystemDependence" do
+    test "nodes/2 accepts SystemDependence struct" do
+      {:ok, sdg} =
+        ExPDG.SystemDependence.from_string("""
+        def foo(x), do: x + 1
+        """)
+
+      all = Query.nodes(sdg)
+      assert all != []
+    end
+
+    test "has_dependents?/2 accepts SystemDependence struct" do
+      {:ok, sdg} =
+        ExPDG.SystemDependence.from_string("""
+        def foo(x), do: x + 1
+        """)
+
+      all = Query.nodes(sdg)
+      node = hd(all)
+      assert is_boolean(Query.has_dependents?(sdg, node.id))
+    end
+  end
+
   describe "pure?" do
     test "delegates to Effects" do
       [node] = IR.from_string!("42")

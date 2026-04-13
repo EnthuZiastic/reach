@@ -176,6 +176,144 @@ defmodule ExPDG.SystemDependenceTest do
     end
   end
 
+  describe "real-world patterns" do
+    test "module with @moduledoc and functions" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        defmodule MyApp.Worker do
+          @moduledoc "A worker module"
+
+          def start(args) do
+            process(args)
+          end
+
+          defp process(args) do
+            Enum.map(args, &to_string/1)
+          end
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+      assert map_size(sdg.function_pdgs) >= 1
+    end
+
+    test "function with case and guards" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def classify(x) when is_integer(x) do
+          case x do
+            n when n > 0 -> :positive
+            0 -> :zero
+            _ -> :negative
+          end
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+    end
+
+    test "function with try/rescue/after" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def safe_call(fun) do
+          try do
+            fun.()
+          rescue
+            e in RuntimeError -> {:error, e}
+          after
+            IO.puts("done")
+          end
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+    end
+
+    test "function with with/else" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def fetch_user(id) do
+          with {:ok, data} <- load(id),
+               {:ok, user} <- parse(data) do
+            {:ok, user}
+          else
+            {:error, reason} -> {:error, reason}
+          end
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+    end
+
+    test "function with pipe chain and anonymous function" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def transform(list) do
+          list
+          |> Enum.map(fn x -> x * 2 end)
+          |> Enum.filter(&(&1 > 5))
+          |> Enum.sort()
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+    end
+
+    test "GenServer module with callbacks" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def init(args), do: {:ok, args}
+        def handle_call(:get, _from, state), do: {:reply, state, state}
+        def handle_cast({:set, val}, _state), do: {:noreply, val}
+        def handle_info(:tick, state), do: {:noreply, state + 1}
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+      assert map_size(sdg.function_pdgs) == 4
+    end
+
+    test "if without else branch" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def maybe_log(x) do
+          if x > 100 do
+            IO.puts("big number")
+          end
+          x
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+    end
+
+    test "for comprehension with multiple generators and filters" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def cross(xs, ys) do
+          for x <- xs, y <- ys, x != y, do: {x, y}
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+    end
+
+    test "receive with multiple clauses and timeout" do
+      {:ok, sdg} =
+        SystemDependence.from_string("""
+        def wait do
+          receive do
+            {:data, d} -> {:ok, d}
+            :stop -> :done
+          after
+            5000 -> :timeout
+          end
+        end
+        """)
+
+      assert %ExPDG.SystemDependence{} = sdg
+    end
+  end
+
   describe "DOT export" do
     test "produces valid DOT" do
       {:ok, sdg} =

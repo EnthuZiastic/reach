@@ -85,6 +85,23 @@ defmodule ExPDG.EffectsTest do
     end
   end
 
+  describe "specific function effects" do
+    test "Module.register_attribute is not pure" do
+      node = node_for("Module.register_attribute(__MODULE__, :foo, accumulate: true)")
+      refute Effects.pure?(node)
+    end
+
+    test "Enum.each is not pure" do
+      node = node_for("Enum.each(list, &IO.puts/1)")
+      refute Effects.pure?(node)
+    end
+
+    test "Enum.map is pure" do
+      node = node_for("Enum.map(list, &to_string/1)")
+      assert Effects.pure?(node)
+    end
+  end
+
   describe "conflicting?" do
     test "pure never conflicts" do
       refute Effects.conflicting?(:pure, :pure)

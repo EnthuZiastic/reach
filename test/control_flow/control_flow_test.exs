@@ -243,6 +243,38 @@ defmodule ExPDG.ControlFlowTest do
     end
   end
 
+  describe "if without else" do
+    test "doesn't crash on missing else branch" do
+      {_func, control_flow} =
+        build_control_flow("""
+        def foo(x) do
+          if x > 0 do
+            :positive
+          end
+        end
+        """)
+
+      assert has_path?(control_flow, :entry, :exit)
+    end
+  end
+
+  describe "nested case in function body" do
+    test "handles case with literal fallback clause" do
+      {_func, control_flow} =
+        build_control_flow("""
+        def foo(x) do
+          case x do
+            :a -> 1
+            :b -> 2
+            _ -> nil
+          end
+        end
+        """)
+
+      assert has_path?(control_flow, :entry, :exit)
+    end
+  end
+
   describe "DOT export" do
     test "produces valid DOT string" do
       {_func, cfg} = build_control_flow("def foo(x), do: x + 1")

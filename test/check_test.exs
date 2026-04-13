@@ -119,6 +119,78 @@ defmodule ExPDG.CheckTest do
     end
   end
 
+  describe "UselessExpression false positive avoidance" do
+    test "does not flag last expression in block" do
+      graph =
+        build_graph("""
+        def foo(x) do
+          y = x + 1
+          Enum.map([1], &to_string/1)
+        end
+        """)
+
+      diagnostics = UselessExpression.run(graph, [])
+      assert diagnostics == []
+    end
+
+    test "does not flag sub-expressions inside calls" do
+      graph =
+        build_graph("""
+        def foo(x) do
+          IO.puts(Enum.join([1, 2], ","))
+        end
+        """)
+
+      useless = Enum.filter(UselessExpression.run(graph, []), &(&1.check == :useless_expression))
+      assert useless == []
+    end
+
+    test "does not flag impure calls like IO.puts" do
+      graph =
+        build_graph("""
+        def foo do
+          IO.puts("hello")
+          :ok
+        end
+        """)
+
+      diagnostics = UselessExpression.run(graph, [])
+      assert diagnostics == []
+    end
+  end
+
+  describe "UnusedDefinition false positive avoidance" do
+    test "does not flag variable used on next line" do
+      graph =
+        build_graph("""
+        def foo(x) do
+          y = x + 1
+          y + 2
+        end
+        """)
+
+      unused =
+        Enum.filter(UnusedDefinition.run(graph, []), fn d ->
+          d.message =~ "y"
+        end)
+
+      assert unused == []
+    end
+
+    test "does not flag underscore-prefixed variables" do
+      graph =
+        build_graph("""
+        def foo(x) do
+          _unused = x + 1
+          :ok
+        end
+        """)
+
+      diagnostics = UnusedDefinition.run(graph, [])
+      assert diagnostics == []
+    end
+  end
+
   describe "diagnostic metadata" do
     test "includes location information" do
       graph =
