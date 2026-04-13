@@ -114,9 +114,9 @@ defmodule Reach.SystemDependence do
   end
 
   defp merge_function_pdgs(function_pdgs) do
-    Enum.reduce(function_pdgs, Graph.new(), fn {_func_id, pdg}, acc ->
-      Reach.GraphUtils.merge(acc, pdg.graph)
-    end)
+    function_pdgs
+    |> Enum.flat_map(fn {_func_id, pdg} -> Graph.edges(pdg.graph) end)
+    |> then(&Graph.add_edges(Graph.new(), &1))
   end
 
   # --- Private: interprocedural edges ---
