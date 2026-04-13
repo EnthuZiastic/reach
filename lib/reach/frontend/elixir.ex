@@ -117,12 +117,13 @@ defmodule Reach.Frontend.Elixir do
   # Module definition
   defp translate({:defmodule, meta, [alias_ast, [do: body]]}, counter, file) do
     body_node = translate(body, counter, file)
+    merged_body = group_function_clauses(body_node)
 
     %Node{
       id: Counter.next(counter),
       type: :module_def,
       meta: %{name: module_name(alias_ast)},
-      children: [body_node],
+      children: [merged_body],
       source_span: span_from_meta(meta, file)
     }
   end
@@ -734,6 +735,40 @@ defmodule Reach.Frontend.Elixir do
     }
   end
 
+  defp group_function_clauses(%Node{type: :block, children: children} = block) do
+    {grouped, order} =
+      Enum.reduce(children, {%{}, []}, fn
+        %Node{type: :function_def, meta: %{name: name, arity: arity}} = node, {groups, ord} ->
+          key = {:func, name, arity}
+          groups = Map.update(groups, key, [node], &(&1 ++ [node]))
+
+          ord =
+            if Map.has_key?(groups, key) and length(groups[key]) > 1, do: ord, else: ord ++ [key]
+
+          {groups, ord}
+
+        node, {groups, ord} ->
+          key = {:other, node.id}
+          {Map.put(groups, key, [node]), ord ++ [key]}
+      end)
+
+    merged =
+      Enum.flat_map(order, fn key ->
+        case Map.get(grouped, key) do
+          [single] ->
+            [single]
+
+          [first | _] = defs ->
+            all_clauses = Enum.flat_map(defs, & &1.children)
+            [%{first | children: all_clauses}]
+        end
+      end)
+
+    %{block | children: merged}
+  end
+
+  defp group_function_clauses(node), do: node
+
   defp mark_as_definitions(%Node{type: :var, meta: meta} = node) do
     %{node | meta: Map.put(meta, :binding_role, :definition)}
   end
@@ -743,8 +778,6 @@ defmodule Reach.Frontend.Elixir do
   end
 
   defp mark_as_definitions(other), do: other
-
-  # --- Helpers ---
 
   defp translate_function_def(def_kind, meta, head, guards, body, counter, file) do
     {name, arity} = fun_name_arity(head)
