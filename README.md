@@ -31,7 +31,7 @@ Reach.taint_analysis(graph,
 graph = Reach.file_to_graph!("lib/accounts.ex")
 
 for node <- Reach.dead_code(graph) do
-  IO.warn("Dead code at \#{inspect(node.source_span)}: \#{node.type}")
+  IO.warn("Dead code at #{inspect(node.source_span)}: #{node.type}")
 end
 ```
 
@@ -136,6 +136,26 @@ Reach.string_to_graph(genserver_source)
 
 # BEAM: also sees child_spec/1, terminate/2, handle_info/2
 Reach.compiled_to_graph(genserver_source)
+```
+
+## Multi-file project analysis
+
+```elixir
+# Analyze a whole Mix project
+project = Reach.Project.from_mix_project()
+
+# Or specific paths
+project = Reach.Project.from_glob("lib/**/*.ex")
+
+# Cross-module taint analysis
+Reach.Project.taint_analysis(project,
+  sources: [type: :call, function: :params],
+  sinks: [type: :call, module: System, function: :cmd]
+)
+
+# Dependency summaries for external modules
+summaries = Reach.Project.summarize_dependency(Ecto.Adapters.SQL)
+project = Reach.Project.from_mix_project(summaries: summaries)
 ```
 
 ## API reference
