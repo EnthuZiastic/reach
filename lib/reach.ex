@@ -594,14 +594,12 @@ defmodule Reach do
       |> MapSet.new()
       |> MapSet.union(observable_ids)
 
-    graph
-    |> nodes()
-    |> Enum.filter(fn node ->
-      node.type in [:call, :binary_op, :unary_op, :match, :var] and
-        not attribute_or_typespec?(node) and
-        pure?(node) and
-        not MapSet.member?(alive_ids, node.id)
-    end)
+    all = nodes(graph)
+
+    # Also mark parents of alive nodes as alive
+    alive_ids = expand_alive_to_parents(all, alive_ids)
+
+    find_dead_nodes(all, alive_ids)
   end
 
   defp observable_nodes(graph) do
@@ -616,7 +614,12 @@ defmodule Reach do
   defp return_node_ids(graph) do
     nodes(graph, type: :clause)
     |> Enum.filter(&(&1.meta[:kind] == :function_clause))
-    |> Enum.map(fn clause -> List.last(clause.children) end)
+    |> Enum.map(fn clause ->
+      case List.last(clause.children) do
+        %{type: :block, children: children} -> List.last(children)
+        other -> other
+      end
+    end)
     |> Enum.reject(&is_nil/1)
     |> MapSet.new(& &1.id)
   end
@@ -698,6 +701,40 @@ defmodule Reach do
   defp match_label?(label, label), do: true
   defp match_label?({tag, _}, tag) when is_atom(tag), do: true
   defp match_label?(_, _), do: false
+
+  defp expand_alive_to_parents(all_nodes, alive_ids) do
+    Enum.reduce(all_nodes, alive_ids, fn node, ids ->
+      child_ids = Enum.map(node.children, & &1.id)
+
+      if Enum.any?(child_ids, &MapSet.member?(ids, &1)) do
+        MapSet.put(ids, node.id)
+      else
+        ids
+      end
+    end)
+  end
+
+  defp find_dead_nodes(all_nodes, alive_ids) do
+    impure_ids = collect_impure_ids(all_nodes)
+
+    all_nodes
+    |> Enum.filter(&candidate_for_dead?/1)
+    |> Enum.reject(&(MapSet.member?(impure_ids, &1.id) or MapSet.member?(alive_ids, &1.id)))
+  end
+
+  defp collect_impure_ids(all_nodes) do
+    all_nodes
+    |> Enum.reject(&pure?/1)
+    |> Enum.flat_map(fn node -> [node.id | Enum.map(node.children, & &1.id)] end)
+    |> MapSet.new()
+  end
+
+  defp candidate_for_dead?(%Node{type: t} = node)
+       when t in [:call, :binary_op, :unary_op, :match, :var] do
+    pure?(node) and not attribute_or_typespec?(node)
+  end
+
+  defp candidate_for_dead?(_), do: false
 
   defp attribute_or_typespec?(%{type: :call, meta: %{function: f}})
        when f in [:@, :__aliases__],
