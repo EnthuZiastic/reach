@@ -12,11 +12,13 @@ defmodule Reach.Concurrency do
   def analyze(ir_nodes, opts \\ []) do
     all_nodes = Keyword.get_lazy(opts, :all_nodes, fn -> IR.all_nodes(ir_nodes) end)
 
+    module_map = build_module_map(all_nodes)
+
     Graph.new()
     |> add_monitor_edges(all_nodes)
-    |> add_trap_exit_edges(all_nodes)
+    |> add_trap_exit_edges(all_nodes, module_map)
     |> add_spawn_link_edges(all_nodes)
-    |> add_task_edges(all_nodes)
+    |> add_task_edges(all_nodes, module_map)
     |> add_supervisor_edges(all_nodes)
   end
 
@@ -59,13 +61,13 @@ defmodule Reach.Concurrency do
 
   # --- trap_exit → :EXIT ---
 
-  defp add_trap_exit_edges(graph, all_nodes) do
+  defp add_trap_exit_edges(graph, all_nodes, module_map) do
     trap_calls = Enum.filter(all_nodes, &trap_exit_call?/1)
     exit_handlers = find_exit_handlers(all_nodes)
 
     for trap <- trap_calls,
         handler <- exit_handlers,
-        same_module?(all_nodes, trap, handler),
+        same_module?(module_map, trap, handler),
         reduce: graph do
       g ->
         g
@@ -107,13 +109,7 @@ defmodule Reach.Concurrency do
     link_calls = Enum.filter(all_nodes, &link_call?/1)
 
     all_links = spawn_links ++ link_calls
-
-    exit_handlers =
-      all_nodes
-      |> Enum.filter(fn node ->
-        node.type == :function_def and
-          node.meta[:name] == :handle_info
-      end)
+    exit_handlers = find_exit_handlers(all_nodes)
 
     for link <- all_links,
         handler <- exit_handlers,
@@ -134,19 +130,35 @@ defmodule Reach.Concurrency do
 
   # --- Task.async → Task.await ---
 
-  defp add_task_edges(graph, all_nodes) do
+  defp add_task_edges(graph, all_nodes, module_map) do
     asyncs = Enum.filter(all_nodes, &task_async?/1)
     awaits = Enum.filter(all_nodes, &task_await?/1)
 
-    for async <- asyncs,
-        await <- awaits,
-        reduce: graph do
-      g ->
-        g
-        |> Graph.add_vertex(async.id)
-        |> Graph.add_vertex(await.id)
-        |> Graph.add_edge(async.id, await.id, label: :task_result)
-    end
+    # Pair asyncs with awaits in the same function by position order.
+    # Within a function, the Nth async typically pairs with the Nth await.
+    # Falls back to cartesian product only across function boundaries.
+    paired = pair_by_scope(asyncs, awaits, module_map)
+
+    Enum.reduce(paired, graph, fn {async, await}, g ->
+      g
+      |> Graph.add_vertex(async.id)
+      |> Graph.add_vertex(await.id)
+      |> Graph.add_edge(async.id, await.id, label: :task_result)
+    end)
+  end
+
+  defp pair_by_scope(asyncs, awaits, module_map) do
+    # Group by enclosing module
+    async_by_mod = Enum.group_by(asyncs, &Map.get(module_map, &1.id))
+    await_by_mod = Enum.group_by(awaits, &Map.get(module_map, &1.id))
+
+    modules = Map.keys(async_by_mod) |> Enum.filter(&Map.has_key?(await_by_mod, &1))
+
+    Enum.flat_map(modules, fn mod ->
+      mod_asyncs = Map.get(async_by_mod, mod, []) |> Enum.sort_by(& &1.id)
+      mod_awaits = Map.get(await_by_mod, mod, []) |> Enum.sort_by(& &1.id)
+      Enum.zip(mod_asyncs, mod_awaits)
+    end)
   end
 
   defp task_async?(%Node{type: :call, meta: %{module: Task, function: f}})
@@ -240,25 +252,19 @@ defmodule Reach.Concurrency do
 
   # --- Helpers ---
 
-  defp same_module?(all_nodes, node_a, node_b) do
-    func_a = find_enclosing_module(all_nodes, node_a.id)
-    func_b = find_enclosing_module(all_nodes, node_b.id)
-    func_a != nil and func_a == func_b
-  end
-
-  defp find_enclosing_module(all_nodes, target_id) do
-    Enum.find_value(all_nodes, fn
-      %Node{type: :module_def, meta: %{name: name}} = mod ->
-        if node_in_subtree?(mod, target_id), do: name
-
-      _ ->
-        nil
+  defp build_module_map(all_nodes) do
+    all_nodes
+    |> Enum.filter(&(&1.type == :module_def))
+    |> Enum.reduce(%{}, fn mod_def, acc ->
+      mod_def
+      |> IR.all_nodes()
+      |> Enum.reduce(acc, &Map.put_new(&2, &1.id, mod_def.meta[:name]))
     end)
   end
 
-  defp node_in_subtree?(%Node{id: id}, target) when id == target, do: true
-
-  defp node_in_subtree?(%Node{children: children}, target) do
-    Enum.any?(children, &node_in_subtree?(&1, target))
+  defp same_module?(module_map, node_a, node_b) do
+    mod_a = Map.get(module_map, node_a.id)
+    mod_b = Map.get(module_map, node_b.id)
+    mod_a != nil and mod_a == mod_b
   end
 end

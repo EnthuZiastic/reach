@@ -88,7 +88,41 @@ defmodule Reach.ConcurrencyTest do
   end
 
   describe "spawn_link → exit flow" do
-    test "creates link_exit edge for spawn_link" do
+    test "creates link_exit edge for spawn_link with :EXIT handler" do
+      {_, graph} =
+        analyze("""
+        defmodule MyServer do
+          def start_worker do
+            spawn_link(fn -> work() end)
+          end
+
+          def handle_info({:EXIT, _pid, _reason}, state) do
+            {:noreply, state}
+          end
+        end
+        """)
+
+      assert :link_exit in edge_labels(graph)
+    end
+
+    test "creates link_exit edge for Process.link with :EXIT handler" do
+      {_, graph} =
+        analyze("""
+        defmodule MyServer do
+          def link_to(pid) do
+            Process.link(pid)
+          end
+
+          def handle_info({:EXIT, _pid, _reason}, state) do
+            {:noreply, state}
+          end
+        end
+        """)
+
+      assert :link_exit in edge_labels(graph)
+    end
+
+    test "no link_exit edge without :EXIT handler" do
       {_, graph} =
         analyze("""
         defmodule MyServer do
@@ -102,24 +136,7 @@ defmodule Reach.ConcurrencyTest do
         end
         """)
 
-      assert :link_exit in edge_labels(graph)
-    end
-
-    test "creates link_exit edge for Process.link" do
-      {_, graph} =
-        analyze("""
-        defmodule MyServer do
-          def link_to(pid) do
-            Process.link(pid)
-          end
-
-          def handle_info(msg, state) do
-            {:noreply, state}
-          end
-        end
-        """)
-
-      assert :link_exit in edge_labels(graph)
+      refute :link_exit in edge_labels(graph)
     end
   end
 
