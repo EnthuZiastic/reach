@@ -24,20 +24,29 @@ defmodule Reach.Plugins.Ecto do
       cast_field_edges(all_nodes)
   end
 
-  # Changeset → Repo.insert: trace data from cast params to write
+  # Changeset → Repo.insert: scoped to the same function_def
   defp changeset_to_repo_edges(all_nodes) do
-    cast_calls = find_calls(all_nodes, nil, :cast) ++ find_calls(all_nodes, Ecto.Changeset, :cast)
+    func_defs = Enum.filter(all_nodes, &(&1.type == :function_def))
 
-    repo_writes =
-      Enum.filter(all_nodes, fn n ->
-        n.type == :call and to_string(n.meta[:module] || "") =~ "Repo" and
-          n.meta[:function] in @repo_write_fns
-      end)
+    Enum.flat_map(func_defs, fn func ->
+      func_nodes = IR.all_nodes(func)
 
-    for cast <- cast_calls,
-        write <- repo_writes do
-      {cast.id, write.id, {:ecto_changeset_flow, cast.meta[:function]}}
-    end
+      casts =
+        Enum.filter(func_nodes, fn n ->
+          n.type == :call and n.meta[:function] == :cast and
+            n.meta[:module] in [nil, Ecto.Changeset]
+        end)
+
+      writes =
+        Enum.filter(func_nodes, fn n ->
+          n.type == :call and repo_module?(n.meta[:module]) and
+            n.meta[:function] in @repo_write_fns
+        end)
+
+      for cast <- casts, write <- writes do
+        {cast.id, write.id, {:ecto_changeset_flow, cast.meta[:function]}}
+      end
+    end)
   end
 
   # Raw SQL: Repo.query("SELECT ...") or Ecto.Adapters.SQL.query
@@ -45,9 +54,8 @@ defmodule Reach.Plugins.Ecto do
     raw_calls =
       Enum.filter(all_nodes, fn n ->
         n.type == :call and
-          (n.meta[:function] in [:query, :query!] and
-             (to_string(n.meta[:module] || "") =~ "Repo" or
-                n.meta[:module] == Ecto.Adapters.SQL))
+          n.meta[:function] in [:query, :query!] and
+          (repo_module?(n.meta[:module]) or n.meta[:module] == Ecto.Adapters.SQL)
       end)
 
     for call <- raw_calls,
@@ -59,7 +67,12 @@ defmodule Reach.Plugins.Ecto do
 
   # cast(changeset, params, [:field1, :field2]) — track which fields are cast
   defp cast_field_edges(all_nodes) do
-    cast_calls = find_calls(all_nodes, nil, :cast) ++ find_calls(all_nodes, Ecto.Changeset, :cast)
+    cast_calls =
+      Enum.filter(all_nodes, fn n ->
+        n.type == :call and n.meta[:function] == :cast and
+          n.meta[:module] in [nil, Ecto.Changeset]
+      end)
+
     Enum.flat_map(cast_calls, &cast_param_edges/1)
   end
 
@@ -69,11 +82,11 @@ defmodule Reach.Plugins.Ecto do
 
   defp cast_param_edges(_), do: []
 
-  defp find_calls(all_nodes, module, function) do
-    Enum.filter(all_nodes, fn n ->
-      n.type == :call and n.meta[:function] == function and
-        (module == nil or n.meta[:module] == module)
-    end)
+  defp repo_module?(nil), do: false
+
+  defp repo_module?(mod) when is_atom(mod) do
+    mod_str = Atom.to_string(mod)
+    String.ends_with?(mod_str, "Repo") or String.ends_with?(mod_str, ".Repo")
   end
 
   defp find_vars_in(node) do

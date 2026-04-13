@@ -52,7 +52,7 @@ defmodule Reach.Plugin do
               opts :: keyword()
             ) :: [edge_spec()]
 
-  @optional_callbacks [analyze_project: 3]
+  @optional_callbacks analyze_project: 3
 
   @known_plugins [
     {Phoenix.Router, Reach.Plugins.Phoenix},

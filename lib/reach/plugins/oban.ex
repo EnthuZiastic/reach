@@ -14,36 +14,33 @@ defmodule Reach.Plugins.Oban do
     enqueue_to_perform_edges(all_nodes)
   end
 
-  # Within a worker: %Oban.Job{args: args} → args used in body
+  # Within a worker: job param in perform → first call that uses it
+  # Only matches the function parameter itself, not arbitrary vars named "job"
   defp job_args_edges(all_nodes) do
     perform_fns =
       Enum.filter(all_nodes, fn n ->
         n.type == :function_def and n.meta[:name] == :perform
       end)
 
-    Enum.flat_map(perform_fns, fn func_def ->
-      func_nodes = IR.all_nodes(func_def)
+    Enum.flat_map(perform_fns, fn func ->
+      param_names = perform_param_names(func)
 
-      args_vars =
-        Enum.filter(func_nodes, fn n ->
-          n.type == :var and n.meta[:name] in [:args, :job]
-        end)
-
-      calls = Enum.filter(func_nodes, &(&1.type == :call))
-
-      for var <- args_vars,
-          call <- calls do
-        {var.id, call.id, :oban_job_args}
-      end
+      func
+      |> IR.all_nodes()
+      |> Enum.filter(fn n ->
+        n.type == :var and n.meta[:name] in param_names and
+          n.meta[:binding_role] != :definition
+      end)
+      |> Enum.map(fn var_use -> {func.id, var_use.id, :oban_job_args} end)
     end)
   end
 
-  # Cross-module: Oban.insert(Worker.new(%{key: val})) → Worker.perform
+  # Cross-module: resolve worker module from MyWorker.new() call
   defp enqueue_to_perform_edges(all_nodes) do
     inserts =
       Enum.filter(all_nodes, fn n ->
-        n.type == :call and
-          (n.meta[:module] == Oban and n.meta[:function] in [:insert, :insert!])
+        n.type == :call and n.meta[:module] == Oban and
+          n.meta[:function] in [:insert, :insert!]
       end)
 
     performs =
@@ -51,15 +48,42 @@ defmodule Reach.Plugins.Oban do
         n.type == :function_def and n.meta[:name] == :perform
       end)
 
-    for insert <- inserts,
-        perform <- performs,
-        arg <- insert.children,
-        var <- find_vars_in(arg) do
-      {var.id, perform.id, :oban_enqueue}
+    performs_by_module =
+      Map.new(performs, fn p -> {p.meta[:module], p} end)
+
+    Enum.flat_map(inserts, &enqueue_edges(&1, performs_by_module))
+  end
+
+  defp enqueue_edges(insert, performs_by_module) do
+    with worker_mod when worker_mod != nil <- extract_worker_module(insert),
+         %{} = perform <- Map.get(performs_by_module, worker_mod) do
+      [{insert.id, perform.id, :oban_enqueue}]
+    else
+      _ -> []
     end
   end
 
-  defp find_vars_in(node) do
-    node |> IR.all_nodes() |> Enum.filter(&(&1.type == :var))
+  # Extract the worker module from Oban.insert(MyWorker.new(%{...}))
+  defp extract_worker_module(insert_call) do
+    insert_call
+    |> IR.all_nodes()
+    |> Enum.find_value(fn n ->
+      if n.type == :call and n.meta[:function] == :new and n.meta[:module] do
+        n.meta[:module]
+      end
+    end)
+  end
+
+  defp perform_param_names(func) do
+    func.children
+    |> Enum.filter(&(&1.type == :clause))
+    |> Enum.flat_map(fn clause ->
+      clause.children
+      |> Enum.filter(fn n ->
+        n.type == :var and n.meta[:binding_role] == :definition
+      end)
+      |> Enum.map(& &1.meta[:name])
+    end)
+    |> Enum.uniq()
   end
 end

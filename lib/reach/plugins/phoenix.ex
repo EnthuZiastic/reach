@@ -4,6 +4,8 @@ defmodule Reach.Plugins.Phoenix do
 
   alias Reach.IR
 
+  @assign_modules [nil, Phoenix.Component, Phoenix.LiveView]
+
   @impl true
   def analyze(all_nodes, _opts) do
     conn_param_to_action_edges(all_nodes) ++
@@ -16,45 +18,56 @@ defmodule Reach.Plugins.Phoenix do
     plug_chain_edges(all_nodes)
   end
 
-  # conn.params / fetch_query_params → action body (taint source)
+  # conn params pattern var → enclosing function_def
+  # Marks the function as receiving untrusted input
   defp conn_param_to_action_edges(all_nodes) do
-    param_accesses =
-      Enum.filter(all_nodes, fn n ->
-        n.type == :call and
-          n.meta[:function] in [:params, :query_params, :body_params, :path_params] and
-          (n.meta[:module] in [Plug.Conn, nil] or to_string(n.meta[:module] || "") =~ "Conn")
-      end)
+    func_defs =
+      Enum.filter(all_nodes, &(&1.type == :function_def))
 
-    for access <- param_accesses do
-      {access.id, access.id, :phoenix_params}
-    end
+    Enum.flat_map(func_defs, fn func ->
+      clauses = Enum.filter(func.children, &(&1.type == :clause))
+
+      conn_params =
+        clauses
+        |> Enum.flat_map(fn clause ->
+          clause.children
+          |> Enum.take(func.meta[:arity] || 0)
+          |> Enum.flat_map(&find_pattern_vars/1)
+        end)
+        |> Enum.filter(&(&1.meta[:name] in [:params, :user_params, :body_params]))
+
+      for var <- conn_params do
+        {var.id, func.id, :phoenix_params}
+      end
+    end)
   end
 
-  # action_fallback — error returns flow to fallback controller
+  # action_fallback — scoped: error tuples within each function_def
   defp action_fallback_edges(all_nodes) do
     fallbacks =
       Enum.filter(all_nodes, fn n ->
         n.type == :call and n.meta[:function] == :action_fallback
       end)
 
-    error_tuples =
-      Enum.filter(all_nodes, fn n ->
-        n.type == :tuple and
-          match?([%{type: :literal, meta: %{value: :error}} | _], n.children)
-      end)
+    case fallbacks do
+      [] ->
+        []
 
-    for fb <- fallbacks,
-        err <- error_tuples do
-      {err.id, fb.id, :phoenix_action_fallback}
+      [fallback | _] ->
+        all_nodes
+        |> Enum.filter(&(&1.type == :function_def))
+        |> Enum.flat_map(&error_tuples_in/1)
+        |> Enum.map(fn err -> {err.id, fallback.id, :phoenix_action_fallback} end)
     end
   end
 
-  # socket assigns: assign(socket, :key, val) → @key in template
+  # socket assigns: assign(socket, :key, val)
+  # Also matches Phoenix.Component.assign and Phoenix.LiveView.assign
   defp socket_assign_edges(all_nodes) do
     assigns =
       Enum.filter(all_nodes, fn n ->
         n.type == :call and n.meta[:function] == :assign and
-          n.meta[:kind] == :local
+          n.meta[:module] in @assign_modules
       end)
 
     for assign_call <- assigns,
@@ -64,22 +77,47 @@ defmodule Reach.Plugins.Phoenix do
     end
   end
 
-  # Plug chains: pipe_through [:auth, :browser] → control deps
+  # Plug chains: pipe_through → route macros within the same scope block
   defp plug_chain_edges(all_nodes) do
-    pipe_throughs =
+    scope_blocks =
       Enum.filter(all_nodes, fn n ->
-        n.type == :call and n.meta[:function] == :pipe_through
+        n.type == :call and n.meta[:function] in [:scope, :pipeline]
       end)
 
-    actions =
-      Enum.filter(all_nodes, fn n ->
-        n.type == :call and n.meta[:function] in [:get, :post, :put, :patch, :delete, :resources]
-      end)
+    scope_blocks
+    |> Enum.flat_map(fn scope ->
+      scope_nodes = IR.all_nodes(scope)
 
-    for pt <- pipe_throughs,
-        action <- actions do
-      {pt.id, action.id, :phoenix_plug_chain}
-    end
+      pipe_throughs =
+        Enum.filter(scope_nodes, fn n ->
+          n.type == :call and n.meta[:function] == :pipe_through
+        end)
+
+      routes =
+        Enum.filter(scope_nodes, fn n ->
+          n.type == :call and
+            n.meta[:function] in [:get, :post, :put, :patch, :delete, :resources]
+        end)
+
+      for pt <- pipe_throughs, route <- routes do
+        {pt.id, route.id, :phoenix_plug_chain}
+      end
+    end)
+  end
+
+  defp error_tuples_in(func) do
+    func |> IR.all_nodes() |> Enum.filter(&error_tuple?/1)
+  end
+
+  defp error_tuple?(node) do
+    node.type == :tuple and
+      match?([%{type: :literal, meta: %{value: :error}} | _], node.children)
+  end
+
+  defp find_pattern_vars(node) do
+    node
+    |> IR.all_nodes()
+    |> Enum.filter(fn n -> n.type == :var and n.meta[:binding_role] == :definition end)
   end
 
   defp find_vars_in(node) do
