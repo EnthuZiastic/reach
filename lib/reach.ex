@@ -42,7 +42,7 @@ defmodule Reach do
       Reach.pure?(node)  #=> true
   """
 
-  alias Reach.{Effects, Frontend, Query, SystemDependence}
+  alias Reach.{Effects, Frontend, SystemDependence}
   alias Reach.IR.{Counter, Node}
 
   @typedoc "A program dependence graph. Built by `string_to_graph/2`, `file_to_graph/2`, etc."
@@ -363,7 +363,13 @@ defmodule Reach do
       Reach.nodes(graph, type: :call)
       Reach.nodes(graph, type: :call, module: Enum)
   """
-  defdelegate nodes(graph, opts \\ []), to: Query
+  def nodes(graph, opts \\ [])
+
+  def nodes(%{nodes: node_map}, opts) do
+    node_map
+    |> Map.values()
+    |> filter_nodes(opts)
+  end
 
   @doc """
   Returns the IR node for a given ID, or `nil`.
@@ -374,22 +380,31 @@ defmodule Reach do
   @doc """
   Returns true if there's a data-dependence path from `source` to `sink`.
   """
-  defdelegate data_flows?(graph, source_id, sink_id), to: Query
+  def data_flows?(graph, source_id, sink_id) do
+    sink_id in forward_slice(graph, source_id)
+  end
 
   @doc """
   Returns true if `controller` has a control-dependence edge to `target`.
   """
-  defdelegate controls?(graph, controller_id, target_id), to: Query
+  def controls?(graph, controller_id, target_id) do
+    control_deps(graph, target_id)
+    |> Enum.any?(fn {id, _label} -> id == controller_id end)
+  end
 
   @doc """
   Returns true if there's any dependence path between two nodes.
   """
-  defdelegate depends?(graph, id_a, id_b), to: Query
+  def depends?(graph, id_a, id_b) do
+    id_b in forward_slice(graph, id_a) or id_a in forward_slice(graph, id_b)
+  end
 
   @doc """
   Returns true if the node has data dependents (its value is used elsewhere).
   """
-  defdelegate has_dependents?(graph, node_id), to: Query
+  def has_dependents?(graph, node_id) do
+    forward_slice(graph, node_id) != []
+  end
 
   @doc """
   Returns true if the path from `source` to `sink` passes through
@@ -398,7 +413,15 @@ defmodule Reach do
   Useful for taint analysis — check if sanitization occurs between
   a source and sink.
   """
-  defdelegate passes_through?(graph, source_id, sink_id, predicate), to: Query
+  def passes_through?(graph, source_id, sink_id, predicate) do
+    chop(graph, source_id, sink_id)
+    |> Enum.any?(fn id ->
+      case node(graph, id) do
+        nil -> false
+        n -> predicate.(n)
+      end
+    end)
+  end
 
   # --- Effects ---
 
@@ -483,7 +506,76 @@ defmodule Reach do
   @spec to_dot(graph()) :: {:ok, String.t()}
   def to_dot(%SystemDependence{graph: g}), do: Elixir.Graph.to_dot(g)
 
+  @doc """
+  Returns the underlying `Graph.t()` (libgraph) for direct traversal.
+
+  Use this when you need graph operations that Reach doesn't expose —
+  path finding, subgraphs, BFS/DFS, topological sort, etc.
+
+      raw = Reach.to_graph(graph)
+      Graph.vertices(raw) |> length()
+      Graph.get_shortest_path(raw, id_a, id_b)
+  """
+  @spec to_graph(graph()) :: Graph.t()
+  def to_graph(%SystemDependence{graph: g}), do: g
+
+  @doc """
+  Returns node IDs directly connected to `node_id`.
+
+  With no label filter, returns all neighbors (both incoming and outgoing).
+  With a label, returns only neighbors connected by edges with that label.
+
+      # All direct neighbors
+      Reach.neighbors(graph, node_id)
+
+      # Only nodes connected by :state_read edges
+      Reach.neighbors(graph, node_id, :state_read)
+
+      # Only data dependencies
+      Reach.neighbors(graph, node_id, {:data, :x})
+  """
+  @spec neighbors(graph(), Node.id(), term() | nil) :: [Node.id()]
+  def neighbors(graph, node_id, label \\ nil)
+
+  def neighbors(%SystemDependence{graph: g}, node_id, nil) do
+    in_ids = g |> Elixir.Graph.in_neighbors(node_id)
+    out_ids = g |> Elixir.Graph.out_neighbors(node_id)
+    Enum.uniq(in_ids ++ out_ids)
+  end
+
+  def neighbors(%SystemDependence{graph: g}, node_id, label) do
+    in_edges = Elixir.Graph.in_edges(g, node_id)
+    out_edges = Elixir.Graph.out_edges(g, node_id)
+
+    (in_edges ++ out_edges)
+    |> Enum.filter(&match_label?(&1.label, label))
+    |> Enum.map(fn e -> if e.v1 == node_id, do: e.v2, else: e.v1 end)
+    |> Enum.uniq()
+  end
+
   # --- Private ---
+
+  defp match_label?(label, label), do: true
+  defp match_label?({tag, _}, tag) when is_atom(tag), do: true
+  defp match_label?(_, _), do: false
+
+  defp filter_nodes(nodes, []), do: nodes
+
+  defp filter_nodes(nodes, [{:type, type} | rest]) do
+    nodes |> Enum.filter(&(&1.type == type)) |> filter_nodes(rest)
+  end
+
+  defp filter_nodes(nodes, [{:module, module} | rest]) do
+    nodes |> Enum.filter(&(&1.meta[:module] == module)) |> filter_nodes(rest)
+  end
+
+  defp filter_nodes(nodes, [{:function, function} | rest]) do
+    nodes |> Enum.filter(&(&1.meta[:function] == function)) |> filter_nodes(rest)
+  end
+
+  defp filter_nodes(nodes, [_ | rest]) do
+    filter_nodes(nodes, rest)
+  end
 
   defp build_data_graph(graph) do
     graph

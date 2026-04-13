@@ -1,8 +1,6 @@
 defmodule Reach.QueryTest do
   use ExUnit.Case, async: true
 
-  alias Reach.Query
-
   defp build_graph(source) do
     Reach.string_to_graph!(source)
   end
@@ -10,13 +8,13 @@ defmodule Reach.QueryTest do
   describe "nodes/2" do
     test "returns all nodes" do
       graph = build_graph("def foo(x), do: x + 1")
-      all = Query.nodes(graph)
+      all = Reach.nodes(graph)
       assert all != []
     end
 
     test "filters by type" do
       graph = build_graph("def foo(x), do: x + 1")
-      calls = Query.nodes(graph, type: :call)
+      calls = Reach.nodes(graph, type: :call)
       Enum.each(calls, fn n -> assert n.type == :call end)
     end
 
@@ -28,7 +26,7 @@ defmodule Reach.QueryTest do
         end
         """)
 
-      enum_calls = Query.nodes(graph, type: :call, module: Enum)
+      enum_calls = Reach.nodes(graph, type: :call, module: Enum)
       assert enum_calls != []
       Enum.each(enum_calls, fn n -> assert n.meta[:module] == Enum end)
     end
@@ -58,7 +56,7 @@ defmodule Reach.QueryTest do
         y_use = List.last(y_nodes)
 
         if x_def && y_use do
-          assert is_boolean(Query.data_flows?(graph, x_def.id, y_use.id))
+          assert is_boolean(Reach.data_flows?(graph, x_def.id, y_use.id))
         end
       end
     end
@@ -85,7 +83,7 @@ defmodule Reach.QueryTest do
         end)
 
       if x_match do
-        assert Query.has_dependents?(graph, x_match.id)
+        assert Reach.has_dependents?(graph, x_match.id)
       end
     end
   end
@@ -93,10 +91,10 @@ defmodule Reach.QueryTest do
   describe "pure?" do
     test "delegates to Effects" do
       [node] = Reach.IR.from_string!("42")
-      assert Query.pure?(node)
+      assert Reach.pure?(node)
 
       [node] = Reach.IR.from_string!("IO.puts(x)")
-      refute Query.pure?(node)
+      refute Reach.pure?(node)
     end
   end
 end

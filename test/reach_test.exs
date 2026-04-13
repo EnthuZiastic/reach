@@ -376,6 +376,79 @@ defmodule ReachTest do
     end
   end
 
+  describe "to_graph/1" do
+    test "returns the raw libgraph struct" do
+      graph = Reach.string_to_graph!("def foo(x), do: x + 1")
+      raw = Reach.to_graph(graph)
+      assert is_struct(raw, Graph)
+      assert Graph.vertices(raw) |> is_list()
+    end
+
+    test "libgraph operations work on the raw graph" do
+      graph = Reach.string_to_graph!("def foo(x), do: x + 1")
+      raw = Reach.to_graph(graph)
+      assert Graph.num_vertices(raw) > 0
+      assert Graph.num_edges(raw) > 0
+    end
+  end
+
+  describe "neighbors/3" do
+    test "returns all direct neighbors" do
+      graph =
+        Reach.string_to_graph!("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
+
+      all = Reach.nodes(graph)
+      node = Enum.find(all, &(&1.type == :binary_op))
+
+      if node do
+        n = Reach.neighbors(graph, node.id)
+        assert is_list(n)
+        assert n != []
+      end
+    end
+
+    test "filters by label" do
+      graph =
+        Reach.string_to_graph!("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
+
+      all = Reach.nodes(graph)
+      node = Enum.find(all, &(&1.type == :binary_op))
+
+      if node do
+        containment = Reach.neighbors(graph, node.id, :containment)
+        assert is_list(containment)
+      end
+    end
+
+    test "filters by tag for tuple labels" do
+      graph =
+        Reach.string_to_graph!("""
+        def foo(x) do
+          y = x + 1
+          y
+        end
+        """)
+
+      all = Reach.nodes(graph)
+      clause = Enum.find(all, &(&1.type == :clause))
+
+      if clause do
+        data_neighbors = Reach.neighbors(graph, clause.id, :data)
+        assert is_list(data_neighbors)
+      end
+    end
+  end
+
   describe "to_dot/1" do
     test "exports to DOT format" do
       graph = Reach.string_to_graph!("def foo(x), do: x + 1")
