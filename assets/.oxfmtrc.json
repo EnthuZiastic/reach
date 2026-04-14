@@ -1,0 +1,26 @@
+{
+  "trailingComma": "none",
+  "tabWidth": 2,
+  "semi": false,
+  "singleQuote": false,
+  "printWidth": 100,
+  "arrowParens": "always",
+  "sortImports": {
+    "order": "asc",
+    "ignoreCase": true,
+    "newlinesBetween": true,
+    "groups": [
+      "builtin",
+      "external",
+      [
+        "parent",
+        "sibling",
+        "index"
+      ],
+      "type"
+    ]
+  },
+  "ignorePatterns": [
+    "js/elk.bundled.js"
+  ]
+}

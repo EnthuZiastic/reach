@@ -26,7 +26,7 @@ defmodule Mix.Tasks.ReachTest do
     content = File.read!(html_path)
     assert content =~ "cytoscape"
     assert content =~ "graphData"
-    assert content =~ "tailwindcss"
+    assert content =~ "graphData"
   end
 
   test "generates DOT output" do

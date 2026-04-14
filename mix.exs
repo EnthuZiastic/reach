@@ -14,7 +14,7 @@ defmodule Reach.MixProject do
       aliases: aliases(),
       dialyzer: [
         plt_file: {:no_warn, "_build/dev/dialyxir_plt.plt"},
-        plt_add_apps: [:mix]
+        plt_add_apps: [:mix, :eex]
       ],
       name: "Reach",
       description: "Program dependence graph for Elixir and Erlang",
@@ -39,9 +39,13 @@ defmodule Reach.MixProject do
       ci: [
         "compile --warnings-as-errors",
         "format --check-formatted",
+        "js.check",
         "credo --strict",
         "dialyzer",
         "test"
+      ],
+      "assets.build": [
+        "volt.build --entry assets/js/app.ts --outdir priv/static --no-hash --name reach"
       ]
     ]
   end
@@ -53,6 +57,7 @@ defmodule Reach.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:jason, "~> 1.0", optional: true},
+      {:volt, "~> 0.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end

@@ -1,0 +1,39 @@
+{
+  "plugins": [
+    "typescript",
+    "import",
+    "unicorn"
+  ],
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-console": "off",
+    "no-empty-function": "error",
+    "eqeqeq": [
+      "error",
+      "always"
+    ],
+    "no-var": "error",
+    "prefer-const": "error",
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-non-null-assertion": "warn",
+    "typescript/consistent-type-imports": "error",
+    "import/no-cycle": "error",
+    "import/no-self-import": "error",
+    "import/no-duplicates": "error",
+    "import/no-mutable-exports": "error",
+    "unicorn/no-instanceof-array": "error",
+    "unicorn/no-typeof-undefined": "error",
+    "unicorn/no-nested-ternary": "error",
+    "unicorn/no-useless-fallback-in-spread": "error",
+    "unicorn/no-unnecessary-await": "error",
+    "unicorn/prefer-string-starts-ends-with": "error"
+  },
+  "ignorePatterns": [
+    "node_modules",
+    "js/elk.bundled.js"
+  ]
+}

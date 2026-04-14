@@ -1,7 +1,7 @@
 defmodule Reach.VisualizeTest do
   use ExUnit.Case, async: true
 
-  describe "to_vue_flow/2" do
+  describe "to_graph_json/2" do
     test "produces nodes and edges from a simple graph" do
       graph =
         Reach.string_to_graph!("""
@@ -12,7 +12,7 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      result = Reach.Visualize.to_vue_flow(graph)
+      result = Reach.Visualize.to_graph_json(graph)
 
       assert is_map(result)
       assert is_list(result.nodes)
@@ -21,7 +21,7 @@ defmodule Reach.VisualizeTest do
       assert result.edges != []
     end
 
-    test "node has required Vue Flow fields" do
+    test "node has required fields" do
       graph =
         Reach.string_to_graph!("""
         defmodule A do
@@ -29,13 +29,10 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{nodes: [node | _]} = Reach.Visualize.to_vue_flow(graph)
+      %{nodes: [node | _]} = Reach.Visualize.to_graph_json(graph)
 
       assert is_binary(node.id)
       assert is_binary(node.type)
-      assert is_map(node.position)
-      assert is_number(node.position.x)
-      assert is_number(node.position.y)
       assert is_map(node.data)
       assert is_binary(node.data.label)
       assert is_binary(node.data.type)
@@ -50,7 +47,7 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{edges: [edge | _]} = Reach.Visualize.to_vue_flow(graph)
+      %{edges: [edge | _]} = Reach.Visualize.to_graph_json(graph)
 
       assert is_binary(edge.id)
       assert is_binary(edge.source)
@@ -68,7 +65,7 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{nodes: nodes} = Reach.Visualize.to_vue_flow(graph)
+      %{nodes: nodes} = Reach.Visualize.to_graph_json(graph)
       func_nodes = Enum.filter(nodes, &(&1.type == "function"))
       assert func_nodes != []
       assert hd(func_nodes).data.label =~ "hello"
@@ -82,7 +79,7 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{nodes: nodes} = Reach.Visualize.to_vue_flow(graph)
+      %{nodes: nodes} = Reach.Visualize.to_graph_json(graph)
       mod_nodes = Enum.filter(nodes, &(&1.type == "module"))
       assert length(mod_nodes) == 1
       assert hd(mod_nodes).data.label =~ "D"
@@ -99,7 +96,7 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{nodes: nodes} = Reach.Visualize.to_vue_flow(graph, dead_code: true)
+      %{nodes: nodes} = Reach.Visualize.to_graph_json(graph, dead_code: true)
       dead_nodes = Enum.filter(nodes, &(&1.style.opacity == "0.3"))
       # 1 + 2 is dead code — pure expression whose value is unused
       assert dead_nodes != []
@@ -113,7 +110,7 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{edges: edges} = Reach.Visualize.to_vue_flow(graph)
+      %{edges: edges} = Reach.Visualize.to_graph_json(graph)
       colors = edges |> Enum.map(& &1.style.stroke) |> Enum.uniq()
       assert colors != []
     end

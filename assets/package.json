@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "dependencies": {
+    "cytoscape": "^3.30.4",
+    "elkjs": "^0.9.3"
+  }
+}
