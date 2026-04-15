@@ -33,6 +33,15 @@ defmodule Reach.Visualize do
 
   @def_cache_key :reach_def_end_cache
 
+  def ensure_def_cache(file) do
+    cache = Process.get(@def_cache_key, %{})
+
+    unless Map.has_key?(cache, file) do
+      line_map = build_def_line_map(file)
+      Process.put(@def_cache_key, Map.put(cache, file, line_map))
+    end
+  end
+
   def extract_func_source(%{type: :function_def, source_span: %{file: file, start_line: start}})
       when is_binary(file) and is_integer(start) do
     with end_line when is_integer(end_line) <- find_end_line(file, start),

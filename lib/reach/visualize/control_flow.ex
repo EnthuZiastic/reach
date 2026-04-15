@@ -4,6 +4,13 @@ defmodule Reach.Visualize.ControlFlow do
   alias Reach.{IR, Visualize}
 
   def build(all_nodes, graph) do
+    # Eagerly populate the def end-line cache for all source files
+    all_nodes
+    |> Enum.map(&span_field(&1, :file))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.each(&Visualize.ensure_def_cache/1)
+
     modules =
       all_nodes
       |> Enum.filter(&(&1.type == :module_def))
@@ -191,51 +198,6 @@ defmodule Reach.Visualize.ControlFlow do
     end
   end
 
-  defp fill_line_gaps(blocks, func) do
-    do_fill_line_gaps(blocks, func)
-  end
-
-  defp do_fill_line_gaps(blocks, func) do
-    file = span_field(func, :file)
-    func_end = find_func_end(file, span_line(func) || 1) || 9999
-
-    sorted = Enum.sort_by(blocks, & &1.start_line)
-
-    sorted
-    |> Enum.with_index()
-    |> Enum.map(fn {block, idx} ->
-      next_start =
-        case Enum.at(sorted, idx + 1) do
-          nil -> func_end - 1
-          next -> next.start_line - 1
-        end
-
-      current_end = block.start_line + length(block.lines) - 1
-
-      if current_end < next_start and file do
-        case File.read(file) do
-          {:ok, content} ->
-            extended_lines =
-              content
-              |> String.split("\n")
-              |> Enum.slice((block.start_line - 1)..(next_start - 1))
-              |> Enum.map(&String.trim_leading/1)
-
-            %{
-              block
-              | lines: extended_lines,
-                source_html: Visualize.highlight_source(Enum.join(extended_lines, "\n"))
-            }
-
-          _ ->
-            block
-        end
-      else
-        block
-      end
-    end)
-  end
-
   defp find_func_end(nil, _), do: nil
 
   defp find_func_end(file, start_line) do
@@ -244,6 +206,51 @@ defmodule Reach.Visualize.ControlFlow do
     case Map.get(cache, file) do
       nil -> nil
       line_map -> Map.get(line_map, start_line)
+    end
+  end
+
+  defp fill_line_gaps([], _func), do: []
+
+  defp fill_line_gaps(blocks, func) do
+    file = span_field(func, :file)
+    func_start = span_line(func) || 1
+    func_end = find_func_end(file, func_start) || func_start
+
+    sorted = Enum.sort_by(blocks, & &1.start_line)
+
+    sorted
+    |> Enum.with_index()
+    |> Enum.map(fn {block, idx} ->
+      # Don't extend beyond: next block's start OR function end
+      boundary =
+        case Enum.at(sorted, idx + 1) do
+          nil -> func_end
+          next -> min(next.start_line - 1, func_end)
+        end
+
+      current_end = block.start_line + length(block.lines) - 1
+
+      if current_end < boundary and file != nil do
+        extend_block(block, file, boundary)
+      else
+        block
+      end
+    end)
+  end
+
+  defp extend_block(block, file, boundary) do
+    case File.read(file) do
+      {:ok, content} ->
+        lines =
+          content
+          |> String.split("\n")
+          |> Enum.slice((block.start_line - 1)..(boundary - 1))
+          |> Enum.map(&String.trim_leading/1)
+
+        %{block | lines: lines, source_html: Visualize.highlight_source(Enum.join(lines, "\n"))}
+
+      _ ->
+        block
     end
   end
 
