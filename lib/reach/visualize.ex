@@ -134,7 +134,8 @@ defmodule Reach.Visualize do
         content
         |> String.split("\n")
         |> Enum.slice((start - 1)..(end_line - 1))
-        |> Enum.map_join("\n", &String.trim_leading/1)
+        |> Enum.join("\n")
+        |> format_source()
 
       _ ->
         nil
@@ -142,6 +143,12 @@ defmodule Reach.Visualize do
   end
 
   defp extract_source(_), do: nil
+
+  defp format_source(source) do
+    Code.format_string!(source) |> IO.iodata_to_binary()
+  rescue
+    _ -> String.trim(source)
+  end
 
   defp find_end_line(content, start) do
     content
