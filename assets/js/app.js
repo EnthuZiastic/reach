@@ -203,32 +203,31 @@ const App = {
             (e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)
           )
 
-          if (funcNodes.length > 1 && validEdges.length > 0) {
-            const positions = await computeLayout(
-              nodeIds,
-              nodeSizes,
-              validEdges.map((e) => ({ id: e.id, source: e.source, target: e.target }))
-            )
-            let localMaxY = 0
-            for (const n of funcNodes) {
-              const pos = positions.get(n.id) ?? { x: 0, y: 0 }
-              n.position = { x: pos.x, y: pos.y + yOffset }
-              localMaxY = Math.max(localMaxY, pos.y + (nodeSizes.get(n.id)?.height ?? 60))
-            }
-            yOffset += localMaxY + 80
-          } else {
-            for (const n of funcNodes) {
-              n.position = { x: 0, y: yOffset }
-            }
-            yOffset += maxH + 60
+          const entryNode = funcNodes[0]
+          const clauseNodes = funcNodes.slice(1)
+          const entryW = nodeSizes.get(entryNode.id)?.width ?? 200
+          const entryH = nodeSizes.get(entryNode.id)?.height ?? 60
+
+          entryNode.position = { x: 0, y: yOffset }
+          yOffset += entryH + 30
+
+          for (const cn of clauseNodes) {
+            const sz = nodeSizes.get(cn.id) ?? { width: 200, height: 60 }
+            cn.position = { x: 30, y: yOffset }
+            yOffset += sz.height + 20
           }
+
+          yOffset += 30
 
           allNodes.push(...funcNodes)
           allEdges.push(...validEdges)
         }
       }
 
-      await layoutAndApply(allNodes, allEdges, nodes, edges, fitView)
+      nodes.value = allNodes
+      edges.value = allEdges
+      await nextTick()
+      fitView({ padding: 0.1 })
     }
 
     async function buildCallGraph() {
@@ -334,10 +333,8 @@ const App = {
       if (mode.value !== "control_flow") {
         mode.value = "control_flow"
       } else {
-        // Scroll to the function node
         const node = nodes.value.find((n) => n.id === funcId)
-        if (node) {
-          const { setCenter } = useVueFlow()
+        if (node?.position) {
           setCenter(node.position.x + 200, node.position.y + 50, { zoom: 1, duration: 300 })
         }
       }
