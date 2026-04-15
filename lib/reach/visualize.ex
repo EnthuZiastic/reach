@@ -131,34 +131,48 @@ defmodule Reach.Visualize do
 
     # Find nodes that are branch targets
     branch_target_ids = MapSet.new(branch_edges, & &1.target)
+    target_blocks = build_target_blocks(all_func_nodes, branch_target_ids, start_line)
 
-    target_blocks =
-      all_func_nodes
-      |> Enum.filter(&(to_string(&1.id) in branch_target_ids))
-      |> Enum.map(fn node ->
-        node_source = extract_node_source(node)
-        node_html = highlight_source(node_source)
+    all_block_ids = MapSet.new([entry_block.id | Enum.map(target_blocks, & &1.id)])
 
-        node_start =
-          get_in(node, [Access.key(:source_span), Access.key(:start_line)]) || start_line
-
-        %{
-          id: to_string(node.id),
-          label: node_label(node),
-          start_line: node_start,
-          lines: if(node_source, do: String.split(node_source, "\n"), else: [node_label(node)]),
-          source_html: node_html
-        }
+    remapped_edges =
+      Enum.map(branch_edges, fn e ->
+        src = if e.source in all_block_ids, do: e.source, else: entry_block.id
+        tgt = if e.target in all_block_ids, do: e.target, else: entry_block.id
+        %{e | source: src, target: tgt}
       end)
+      |> Enum.reject(fn e -> e.source == e.target end)
+      |> Enum.uniq_by(fn e -> {e.source, e.target} end)
 
     %{
       blocks: [entry_block | target_blocks],
-      edges: branch_edges
+      edges: remapped_edges
     }
   end
 
+  defp build_target_blocks(all_func_nodes, branch_target_ids, fallback_line) do
+    all_func_nodes
+    |> Enum.filter(&(to_string(&1.id) in branch_target_ids))
+    |> Enum.map(fn node ->
+      node_source = extract_node_source(node)
+
+      node_start =
+        get_in(node, [Access.key(:source_span), Access.key(:start_line)]) || fallback_line
+
+      %{
+        id: to_string(node.id),
+        label: node_label(node),
+        start_line: node_start,
+        lines: if(node_source, do: String.split(node_source, "\n"), else: [node_label(node)]),
+        source_html: highlight_source(node_source)
+      }
+    end)
+  end
+
   defp format_control_label({:clause_match, n}), do: "match #{n}"
+
   defp format_control_label({:clause_fail, n}), do: "fail #{n}"
+
   defp format_control_label(other), do: inspect(other)
 
   defp branch_color({:clause_match, _}), do: "#16a34a"
@@ -331,18 +345,15 @@ defmodule Reach.Visualize do
 
   defp extract_source(%{type: :function_def, source_span: %{file: file, start_line: start}})
        when is_binary(file) and is_integer(start) do
-    case File.read(file) do
-      {:ok, content} ->
-        end_line = find_end_line(content, start)
-
-        content
-        |> String.split("\n")
-        |> Enum.slice((start - 1)..(end_line - 1))
-        |> Enum.join("\n")
-        |> format_source()
-
-      _ ->
-        nil
+    with {:ok, content} <- File.read(file),
+         end_line when is_integer(end_line) <- find_end_line(file, start) do
+      content
+      |> String.split("\n")
+      |> Enum.slice((start - 1)..(end_line - 1))
+      |> Enum.join("\n")
+      |> format_source()
+    else
+      _ -> nil
     end
   end
 
@@ -370,15 +381,53 @@ defmodule Reach.Visualize do
     _ -> String.trim(source)
   end
 
-  defp find_end_line(content, start) do
-    content
-    |> String.split("\n")
-    |> Enum.drop(start)
-    |> Enum.with_index(start + 1)
-    |> Enum.find_value(start + 2, fn {line, idx} ->
-      trimmed = String.trim(line)
-      if trimmed == "end" or String.starts_with?(trimmed, "end "), do: idx
-    end)
+  @def_end_cache_key :reach_def_end_cache
+
+  defp find_end_line(file, start_line) do
+    cache = Process.get(@def_end_cache_key, %{})
+
+    case Map.get(cache, file) do
+      nil ->
+        line_map = build_def_line_map(file)
+        Process.put(@def_end_cache_key, Map.put(cache, file, line_map))
+        Map.get(line_map, start_line)
+
+      line_map ->
+        Map.get(line_map, start_line)
+    end
+  end
+
+  defp build_def_line_map(file) do
+    with {:ok, source} <- File.read(file),
+         {:ok, ast} <-
+           Code.string_to_quoted(source,
+             columns: true,
+             token_metadata: true,
+             file: file
+           ) do
+      collect_def_ranges(ast)
+    else
+      _ -> %{}
+    end
+  end
+
+  defp collect_def_ranges(ast) do
+    {_, ranges} =
+      Macro.prewalk(ast, %{}, fn
+        {def_type, meta, [{_name, _, _} | _]} = node, acc
+        when def_type in [:def, :defp, :defmacro, :defmacrop] ->
+          end_meta = meta[:end]
+
+          end_line =
+            if end_meta, do: end_meta[:line], else: meta[:line]
+
+          {node, Map.put(acc, meta[:line], end_line)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    ranges
   end
 
   defp highlight_source(nil), do: nil

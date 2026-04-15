@@ -119,7 +119,11 @@ async function layoutAndApply(rawNodes, rawEdges, nodes, edges, fitView) {
   nodes.value = rawNodes
   edges.value = validEdges
   await nextTick()
-  fitView({ padding: 0.15 })
+  await nextTick()
+  // fitView after remount
+  try {
+    fitView({ padding: 0.15 })
+  } catch {}
 }
 
 // ── Main App ──
@@ -127,11 +131,12 @@ async function layoutAndApply(rawNodes, rawEdges, nodes, edges, fitView) {
 const App = {
   props: { graphData: Object },
   setup(props) {
-    const mode = ref("call_graph")
+    const mode = ref("control_flow")
     const nodeTypes = { code: CodeNode, compact: CompactNode }
     const nodes = ref([])
     const edges = ref([])
-    const { fitView } = useVueFlow()
+    const { fitView, setCenter, getNodes, removeNodes, addNodes, addEdges, removeEdges, getEdges } =
+      useVueFlow()
 
     // Sidebar state
     const selectedModule = ref(null)
@@ -141,43 +146,89 @@ const App = {
       const cf = props.graphData.control_flow
       if (!cf?.length) return
 
-      const mod = selectedModule.value ? cf.find((m) => m.module === selectedModule.value) : cf[0]
-      if (!mod) return
+      const allNodes = []
+      const allEdges = []
+      let yOffset = 0
 
-      const func = selectedFunction.value
-        ? mod.functions.find((f) => f.id === selectedFunction.value)
-        : mod.functions[0]
-      if (!func) return
+      for (const mod of cf) {
+        for (const func of mod.functions) {
+          const blocks = func.blocks
+          const funcNodes = []
 
-      selectedModule.value = mod.module
-      selectedFunction.value = func.id
+          for (const b of blocks.blocks) {
+            const lines = b.source_html ? b.source_html.split("\n") : (b.lines ?? [])
+            funcNodes.push({
+              id: b.id,
+              type: "code",
+              position: { x: 0, y: 0 },
+              data: {
+                label:
+                  b.id === func.id
+                    ? `${mod.module ? mod.module + "." : ""}${func.name}/${func.arity}`
+                    : b.label,
+                nodeType: b.id === func.id ? "function" : "match",
+                sourceHtml: b.source_html,
+                sourceText: b.source_html ? null : b.lines?.join("\n"),
+                lines,
+                startLine: b.start_line
+              }
+            })
+          }
 
-      const blocks = func.blocks
-      const rawNodes = blocks.blocks.map((b) => ({
-        id: b.id,
-        type: "code",
-        position: { x: 0, y: 0 },
-        data: {
-          label: b.label,
-          nodeType: b.id === func.id ? "function" : "match",
-          sourceHtml: b.source_html,
-          sourceText: b.source_html ? null : b.lines?.join("\n"),
-          lines: b.source_html ? b.source_html.split("\n") : (b.lines ?? []),
-          startLine: b.start_line
+          const funcEdges = blocks.edges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            type: "smoothstep",
+            style: { stroke: e.color, strokeWidth: 2 },
+            label: e.label,
+            labelStyle: { fill: e.color, fontSize: 11 }
+          }))
+
+          // Compute sizes for ELK
+          const nodeIds = funcNodes.map((n) => n.id)
+          const nodeSizes = new Map()
+          let maxH = 0
+          for (const n of funcNodes) {
+            const lc = n.data.lines?.length ?? 1
+            const ml = (n.data.lines ?? [n.data.label]).reduce((m, l) => Math.max(m, l.length), 0)
+            const w = Math.max(180, ml * 7.5 + 60)
+            const h = Math.max(40, lc * 18 + 30)
+            nodeSizes.set(n.id, { width: w, height: h })
+            maxH = Math.max(maxH, h)
+          }
+
+          const nodeIdSet = new Set(nodeIds)
+          const validEdges = funcEdges.filter(
+            (e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)
+          )
+
+          if (funcNodes.length > 1 && validEdges.length > 0) {
+            const positions = await computeLayout(
+              nodeIds,
+              nodeSizes,
+              validEdges.map((e) => ({ id: e.id, source: e.source, target: e.target }))
+            )
+            let localMaxY = 0
+            for (const n of funcNodes) {
+              const pos = positions.get(n.id) ?? { x: 0, y: 0 }
+              n.position = { x: pos.x, y: pos.y + yOffset }
+              localMaxY = Math.max(localMaxY, pos.y + (nodeSizes.get(n.id)?.height ?? 60))
+            }
+            yOffset += localMaxY + 80
+          } else {
+            for (const n of funcNodes) {
+              n.position = { x: 0, y: yOffset }
+            }
+            yOffset += maxH + 60
+          }
+
+          allNodes.push(...funcNodes)
+          allEdges.push(...validEdges)
         }
-      }))
+      }
 
-      const rawEdges = blocks.edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        type: "smoothstep",
-        style: { stroke: e.color, strokeWidth: 2 },
-        label: e.label,
-        labelStyle: { fill: e.color, fontSize: 11 }
-      }))
-
-      await layoutAndApply(rawNodes, rawEdges, nodes, edges, fitView)
+      await layoutAndApply(allNodes, allEdges, nodes, edges, fitView)
     }
 
     async function buildCallGraph() {
@@ -242,23 +293,25 @@ const App = {
     }
 
     async function rebuild() {
-      switch (mode.value) {
-        case "control_flow":
-          await buildControlFlow()
-          break
-        case "call_graph":
-          await buildCallGraph()
-          break
-        case "data_flow":
-          await buildDataFlow()
-          break
+      try {
+        switch (mode.value) {
+          case "control_flow":
+            await buildControlFlow()
+            break
+          case "call_graph":
+            await buildCallGraph()
+            break
+          case "data_flow":
+            await buildDataFlow()
+            break
+        }
+      } catch (e) {
+        console.error("rebuild error:", e)
       }
     }
 
     watch(mode, rebuild)
-    watch(selectedFunction, () => {
-      if (mode.value === "control_flow") rebuild()
-    })
+
     onMounted(rebuild)
 
     // Sidebar data
@@ -278,7 +331,16 @@ const App = {
     function selectFunction(modName, funcId) {
       selectedModule.value = modName
       selectedFunction.value = funcId
-      if (mode.value !== "control_flow") mode.value = "control_flow"
+      if (mode.value !== "control_flow") {
+        mode.value = "control_flow"
+      } else {
+        // Scroll to the function node
+        const node = nodes.value.find((n) => n.id === funcId)
+        if (node) {
+          const { setCenter } = useVueFlow()
+          setCenter(node.position.x + 200, node.position.y + 50, { zoom: 1, duration: 300 })
+        }
+      }
     }
 
     return () =>
