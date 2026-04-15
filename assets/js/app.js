@@ -97,7 +97,7 @@ async function layoutAndApply(rawNodes, rawEdges, nodes, edges, fitView) {
     const lineCount = n.data.lines?.length ?? 1
     const maxLen = (n.data.lines ?? [n.data.label]).reduce((m, l) => Math.max(m, l.length), 0)
     nodeSizes.set(n.id, {
-      width: Math.max(180, maxLen * 7.5 + 60),
+      width: Math.min(600, Math.max(180, maxLen * 7.5 + 60)),
       height: Math.max(40, lineCount * 18 + 30)
     })
   }
@@ -148,16 +148,14 @@ const App = {
 
       const allNodes = []
       const allEdges = []
-      let yOffset = 0
 
       for (const mod of cf) {
         for (const func of mod.functions) {
           const blocks = func.blocks
-          const funcNodes = []
 
           for (const b of blocks.blocks) {
             const lines = b.source_html ? b.source_html.split("\n") : (b.lines ?? [])
-            funcNodes.push({
+            allNodes.push({
               id: b.id,
               type: "code",
               position: { x: 0, y: 0 },
@@ -175,59 +173,21 @@ const App = {
             })
           }
 
-          const funcEdges = blocks.edges.map((e) => ({
-            id: e.id,
-            source: e.source,
-            target: e.target,
-            type: "smoothstep",
-            style: { stroke: e.color, strokeWidth: 2 },
-            label: e.label,
-            labelStyle: { fill: e.color, fontSize: 11 }
-          }))
-
-          // Compute sizes for ELK
-          const nodeIds = funcNodes.map((n) => n.id)
-          const nodeSizes = new Map()
-          let maxH = 0
-          for (const n of funcNodes) {
-            const lc = n.data.lines?.length ?? 1
-            const ml = (n.data.lines ?? [n.data.label]).reduce((m, l) => Math.max(m, l.length), 0)
-            const w = Math.max(180, ml * 7.5 + 60)
-            const h = Math.max(40, lc * 18 + 30)
-            nodeSizes.set(n.id, { width: w, height: h })
-            maxH = Math.max(maxH, h)
+          for (const e of blocks.edges) {
+            allEdges.push({
+              id: e.id,
+              source: e.source,
+              target: e.target,
+              type: "smoothstep",
+              style: { stroke: e.color, strokeWidth: 2 },
+              label: e.label,
+              labelStyle: { fill: e.color, fontSize: 11 }
+            })
           }
-
-          const nodeIdSet = new Set(nodeIds)
-          const validEdges = funcEdges.filter(
-            (e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)
-          )
-
-          const entryNode = funcNodes[0]
-          const clauseNodes = funcNodes.slice(1)
-          const entryW = nodeSizes.get(entryNode.id)?.width ?? 200
-          const entryH = nodeSizes.get(entryNode.id)?.height ?? 60
-
-          entryNode.position = { x: 0, y: yOffset }
-          yOffset += entryH + 30
-
-          for (const cn of clauseNodes) {
-            const sz = nodeSizes.get(cn.id) ?? { width: 200, height: 60 }
-            cn.position = { x: 30, y: yOffset }
-            yOffset += sz.height + 20
-          }
-
-          yOffset += 30
-
-          allNodes.push(...funcNodes)
-          allEdges.push(...validEdges)
         }
       }
 
-      nodes.value = allNodes
-      edges.value = allEdges
-      await nextTick()
-      fitView({ padding: 0.1 })
+      await layoutAndApply(allNodes, allEdges, nodes, edges, fitView)
     }
 
     async function buildCallGraph() {

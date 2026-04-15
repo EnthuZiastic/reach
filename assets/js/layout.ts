@@ -53,11 +53,17 @@ export async function computeLayout(
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "DOWN",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "60",
-      "elk.spacing.nodeNode": "30",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "40",
+      "elk.spacing.nodeNode": "20",
+      "elk.spacing.componentComponent": "30",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
-      "elk.edgeRouting": "ORTHOGONAL"
+      "elk.separateConnectedComponents": "true",
+      "elk.layered.compaction.connectedComponents": "true",
+      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+      "elk.layered.compaction.postCompaction.strategy": "EDGE_LENGTH",
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.aspectRatio": "0.1"
     },
     children,
     edges: elkEdges
