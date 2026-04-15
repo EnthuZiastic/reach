@@ -259,6 +259,46 @@ defmodule Reach.Visualize.ControlFlow do
     end
   end
 
+  defp find_expression_end(node, file) do
+    start = span_line(node)
+    if is_nil(start) or is_nil(file), do: start || 1, else: do_find_expression_end(file, start)
+  end
+
+  defp do_find_expression_end(file, start) do
+    case File.read(file) do
+      {:ok, content} ->
+        lines = String.split(content, "\n")
+        line_text = Enum.at(lines, start - 1, "")
+        trimmed = String.trim(line_text)
+
+        # If line ends with an opening delimiter, scan for the close
+        if String.ends_with?(trimmed, ["%{", "[", "("]) or
+             String.ends_with?(trimmed, [","]) or
+             trimmed == "%{" do
+          # Find the matching close by tracking indent level
+          base_indent = byte_size(line_text) - byte_size(String.trim_leading(line_text))
+
+          lines
+          |> Enum.drop(start)
+          |> Enum.with_index(start + 1)
+          |> Enum.find_value(start, fn {l, idx} ->
+            l_indent = byte_size(l) - byte_size(String.trim_leading(l))
+            l_trimmed = String.trim(l)
+
+            if l_indent <= base_indent and l_trimmed != "" and
+                 not String.starts_with?(l_trimmed, "#") do
+              idx
+            end
+          end)
+        else
+          start
+        end
+
+      _ ->
+        start
+    end
+  end
+
   defp find_first_line(nodes) do
     # Check nodes directly, then their children
     direct = Enum.find_value(nodes, &span_line/1)
@@ -348,7 +388,7 @@ defmodule Reach.Visualize.ControlFlow do
   defp read_line_range(sorted_nodes) do
     file = span_field(hd(sorted_nodes), :file)
     first_line = span_line(hd(sorted_nodes))
-    last_line = span_line(List.last(sorted_nodes))
+    last_line = find_expression_end(List.last(sorted_nodes), file)
 
     if is_nil(file) do
       sorted_nodes |> Enum.map(&ir_label/1) |> Enum.uniq() |> Enum.join("\n")

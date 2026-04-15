@@ -121,7 +121,7 @@ async function buildControlFlow() {
           type: "smoothstep",
           style: { stroke: e.color, strokeWidth: 2 },
           label: e.label,
-          labelStyle: { fill: e.color, fontSize: 11 },
+          labelStyle: { fill: e.color, fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, monospace" },
         })
       }
     }
