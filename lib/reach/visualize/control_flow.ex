@@ -156,7 +156,7 @@ defmodule Reach.Visualize.ControlFlow do
         chain = follow_chain(leader_id, sequential_map, branch_targets)
         chain_nodes = Enum.map(chain, &Map.get(node_map, &1)) |> Enum.reject(&is_nil/1)
         source_text = extract_block_source_lines(chain_nodes)
-        start_line = Enum.find_value(chain_nodes, 1, &span_line/1)
+        start_line = find_first_line(chain_nodes)
 
         make_block(
           to_string(leader_id),
@@ -258,6 +258,19 @@ defmodule Reach.Visualize.ControlFlow do
     end
   end
 
+  defp find_first_line(nodes) do
+    # Check nodes directly, then their children
+    direct = Enum.find_value(nodes, &span_line/1)
+
+    if direct do
+      direct
+    else
+      nodes
+      |> Enum.flat_map(fn n -> n.children end)
+      |> Enum.find_value(1, &span_line/1)
+    end
+  end
+
   defp span_line(node), do: span_field(node, :start_line)
 
   defp safe_to_int(s) when is_binary(s) do
@@ -274,7 +287,7 @@ defmodule Reach.Visualize.ControlFlow do
 
     cond do
       is_nil(first) -> "block"
-      first.type == :clause -> "#{func.meta[:name]}/#{func.meta[:arity]}"
+      first.type == :clause -> "#{func.meta[:name]}/#{func.meta[:arity]} #{ir_label(first)}"
       first.type == :call -> ir_label(first)
       first.type == :var -> ir_label(first)
       first.type in [:case, :if, :cond] -> to_string(first.type)
@@ -300,8 +313,17 @@ defmodule Reach.Visualize.ControlFlow do
 
     case nodes_with_lines do
       [] ->
-        labels = Enum.map(nodes, &ir_label/1) |> Enum.uniq()
-        if labels == [], do: nil, else: Enum.join(labels, "\n")
+        # No source spans — try to get source from children
+        child_lines =
+          nodes
+          |> Enum.flat_map(fn n -> n.children end)
+          |> Enum.filter(&span_line/1)
+          |> Enum.sort_by(&span_line/1)
+
+        case child_lines do
+          [] -> nil
+          sorted -> read_line_range(sorted)
+        end
 
       sorted ->
         read_line_range(sorted)
