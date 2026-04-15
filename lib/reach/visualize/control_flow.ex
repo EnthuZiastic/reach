@@ -119,58 +119,213 @@ defmodule Reach.Visualize.ControlFlow do
     {[dispatch | clause_blocks], edges}
   end
 
-  # Single function: build blocks from control dependence edges
-  defp build_blocks(func, func_nodes, control_edges) do
-    source = Visualize.extract_func_source(func)
-    start_line = span_field(func, :start_line) || 1
+  # Single function: build real basic blocks from CFG
+  defp build_blocks(func, _func_nodes, _control_edges) do
+    cfg = Reach.ControlFlow.build(func)
+    all_func_nodes = IR.all_nodes(func)
+    node_map = Map.new(all_func_nodes, &{&1.id, &1})
+    cfg_edges = Graph.edges(cfg)
 
-    # Entry block: the function itself
-    entry =
-      make_block(
-        to_string(func.id),
-        "#{func.meta[:name]}/#{func.meta[:arity]}",
-        start_line,
-        source,
-        Visualize.highlight_source(source)
-      )
+    sequential_map =
+      cfg_edges
+      |> Enum.filter(&(&1.label == :sequential))
+      |> Map.new(&{&1.v1, &1.v2})
 
-    if control_edges == [] do
-      {[entry], []}
+    # Block leaders: targets of branch edges + entry successors
+    branch_targets =
+      cfg_edges
+      |> Enum.filter(fn e ->
+        match?({:clause_match, _}, e.label) or match?({:clause_fail, _}, e.label)
+      end)
+      |> Enum.map(& &1.v2)
+      |> MapSet.new()
+
+    entry_successors =
+      cfg_edges
+      |> Enum.filter(&(&1.v1 == :entry))
+      |> Enum.map(& &1.v2)
+      |> MapSet.new()
+
+    leaders = MapSet.union(branch_targets, entry_successors)
+
+    # Build blocks from sequential chains
+    blocks =
+      leaders
+      |> Enum.filter(&is_integer/1)
+      |> Enum.map(fn leader_id ->
+        chain = follow_chain(leader_id, sequential_map, branch_targets)
+        chain_nodes = Enum.map(chain, &Map.get(node_map, &1)) |> Enum.reject(&is_nil/1)
+        source_text = extract_block_source_lines(chain_nodes)
+        start_line = Enum.find_value(chain_nodes, 1, &span_line/1)
+
+        make_block(
+          to_string(leader_id),
+          block_label(chain_nodes, func),
+          start_line,
+          source_text,
+          Visualize.highlight_source(source_text)
+        )
+      end)
+      |> Enum.reject(&(Enum.empty?(&1.lines) and is_nil(&1.source_html)))
+
+    edges = build_block_edges(cfg_edges, blocks, sequential_map, leaders)
+
+    case blocks do
+      [] ->
+        source = Visualize.extract_func_source(func)
+
+        {[
+           make_block(
+             to_string(func.id),
+             "#{func.meta[:name]}/#{func.meta[:arity]}",
+             span_line(func),
+             source,
+             Visualize.highlight_source(source)
+           )
+         ], []}
+
+      _ ->
+        {blocks, edges}
+    end
+  end
+
+  defp build_block_edges(cfg_edges, blocks, sequential_map, leaders) do
+    block_id_set = MapSet.new(blocks, &String.to_integer(&1.id))
+
+    cfg_edges
+    |> Enum.filter(fn e ->
+      is_integer(e.v1) and is_integer(e.v2) and
+        (match?({:clause_match, _}, e.label) or match?({:clause_fail, _}, e.label))
+    end)
+    |> Enum.map(fn e ->
+      src = find_block_leader(e.v1, sequential_map, leaders)
+
+      %{
+        id: "cfg_#{e.v1}_#{e.v2}",
+        source: to_string(src),
+        target: to_string(e.v2),
+        label: cfg_edge_label(e.label),
+        color: cfg_edge_color(e.label)
+      }
+    end)
+    |> Enum.reject(&(&1.source == &1.target))
+    |> Enum.filter(fn e ->
+      s = safe_to_int(e.source)
+      t = safe_to_int(e.target)
+      (s == nil or s in block_id_set) and (t == nil or t in block_id_set)
+    end)
+    |> Enum.uniq_by(&{&1.source, &1.target})
+  end
+
+  defp follow_chain(start, sequential_map, branch_targets) do
+    do_follow(start, sequential_map, branch_targets, [start])
+  end
+
+  defp do_follow(current, sequential_map, branch_targets, acc) do
+    case Map.get(sequential_map, current) do
+      nil ->
+        Enum.reverse(acc)
+
+      next when is_integer(next) ->
+        if next in branch_targets,
+          do: Enum.reverse(acc),
+          else: do_follow(next, sequential_map, branch_targets, [next | acc])
+
+      _ ->
+        Enum.reverse(acc)
+    end
+  end
+
+  defp find_block_leader(node_id, sequential_map, leaders) do
+    if node_id in leaders do
+      node_id
     else
-      # Find branch source nodes (nodes that have outgoing control edges)
-      _branch_sources = MapSet.new(control_edges, & &1.v1)
+      reverse = Map.new(sequential_map, fn {k, v} -> {v, k} end)
+      walk_back(node_id, reverse, leaders, 20)
+    end
+  end
 
-      # Find branch target nodes
-      branch_targets =
-        control_edges
-        |> Enum.map(& &1.v2)
-        |> Enum.uniq()
+  defp walk_back(id, _reverse, _leaders, 0), do: id
 
-      node_map = Map.new(func_nodes, &{&1.id, &1})
+  defp walk_back(id, reverse, leaders, depth) do
+    if id in leaders do
+      id
+    else
+      case Map.get(reverse, id) do
+        nil -> id
+        prev -> walk_back(prev, reverse, leaders, depth - 1)
+      end
+    end
+  end
 
-      # Build a block for each branch target
-      target_blocks =
-        branch_targets
-        |> Enum.map(fn target_id ->
-          node = Map.get(node_map, target_id)
-          node_source = node && extract_node_line(node)
-          node_start = (node && span_field(node, :start_line)) || start_line
+  defp span_line(node), do: span_field(node, :start_line)
 
-          make_block(
-            to_string(target_id),
-            (node && ir_label(node)) || "block",
-            node_start,
-            node_source,
-            Visualize.highlight_source(node_source)
-          )
-        end)
+  defp safe_to_int(s) when is_binary(s) do
+    case Integer.parse(s) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
 
-      # Build edges: remap source to entry block if source is inside function
-      block_ids = MapSet.new([to_string(func.id) | Enum.map(target_blocks, & &1.id)])
+  defp safe_to_int(_), do: nil
 
-      edges = build_control_edges(control_edges, block_ids, func.id)
+  defp block_label(nodes, func) do
+    first = List.first(nodes)
 
-      {[entry | target_blocks], edges}
+    cond do
+      is_nil(first) -> "block"
+      first.type == :clause -> "#{func.meta[:name]}/#{func.meta[:arity]}"
+      first.type == :call -> ir_label(first)
+      first.type == :var -> ir_label(first)
+      first.type in [:case, :if, :cond] -> to_string(first.type)
+      true -> ir_label(first)
+    end
+  end
+
+  defp cfg_edge_label({:clause_match, n}), do: "match #{n}"
+  defp cfg_edge_label({:clause_fail, n}), do: "fail #{n}"
+  defp cfg_edge_label(:return), do: "return"
+  defp cfg_edge_label(other), do: inspect(other)
+
+  defp cfg_edge_color({:clause_match, _}), do: "#16a34a"
+  defp cfg_edge_color({:clause_fail, _}), do: "#dc2626"
+  defp cfg_edge_color(:return), do: "#6b7280"
+  defp cfg_edge_color(_), do: "#ea580c"
+
+  defp extract_block_source_lines(nodes) do
+    nodes_with_lines =
+      nodes
+      |> Enum.filter(&span_line/1)
+      |> Enum.sort_by(&span_line/1)
+
+    case nodes_with_lines do
+      [] ->
+        labels = Enum.map(nodes, &ir_label/1) |> Enum.uniq()
+        if labels == [], do: nil, else: Enum.join(labels, "\n")
+
+      sorted ->
+        read_line_range(sorted)
+    end
+  end
+
+  defp read_line_range(sorted_nodes) do
+    file = span_field(hd(sorted_nodes), :file)
+    first_line = span_line(hd(sorted_nodes))
+    last_line = span_line(List.last(sorted_nodes))
+
+    if is_nil(file) do
+      sorted_nodes |> Enum.map(&ir_label/1) |> Enum.uniq() |> Enum.join("\n")
+    else
+      case File.read(file) do
+        {:ok, content} ->
+          content
+          |> String.split("\n")
+          |> Enum.slice((first_line - 1)..max(first_line - 1, last_line - 1))
+          |> Enum.map_join("\n", &String.trim_leading/1)
+
+        _ ->
+          nil
+      end
     end
   end
 
@@ -205,37 +360,10 @@ defmodule Reach.Visualize.ControlFlow do
   defp ir_label(%{type: :clause, meta: %{kind: kind}}), do: "#{kind}"
   defp ir_label(%{type: type}), do: to_string(type)
 
-  defp build_control_edges(control_edges, block_ids, func_id) do
-    control_edges
-    |> Enum.map(fn e ->
-      src = if to_string(e.v1) in block_ids, do: to_string(e.v1), else: to_string(func_id)
-
-      %{
-        id: "cf_#{e.v1}_#{e.v2}",
-        source: src,
-        target: to_string(e.v2),
-        label: control_label(e.label),
-        color: control_color(e.label)
-      }
-    end)
-    |> Enum.reject(&(&1.source == &1.target))
-    |> Enum.uniq_by(&{&1.source, &1.target})
-  end
-
   # ── Edge labeling ──
 
   defp control_edge?({:control, _}), do: true
   defp control_edge?(_), do: false
-
-  defp control_label({:control, {:clause_match, n}}), do: "match #{n}"
-  defp control_label({:control, {:clause_fail, n}}), do: "fail #{n}"
-  defp control_label({:control, :sequential}), do: ""
-  defp control_label({:control, other}), do: inspect(other)
-  defp control_label(_), do: ""
-
-  defp control_color({:control, {:clause_match, _}}), do: "#16a34a"
-  defp control_color({:control, {:clause_fail, _}}), do: "#dc2626"
-  defp control_color(_), do: "#ea580c"
 
   defp dispatch_color(0), do: "#16a34a"
   defp dispatch_color(1), do: "#2563eb"
@@ -298,19 +426,6 @@ defmodule Reach.Visualize.ControlFlow do
       line_map -> Map.get(line_map, start_line)
     end
   end
-
-  defp extract_node_line(%{source_span: %{file: file, start_line: line}})
-       when is_binary(file) and is_integer(line) do
-    case File.read(file) do
-      {:ok, content} ->
-        content |> String.split("\n") |> Enum.at(line - 1, "") |> String.trim()
-
-      _ ->
-        nil
-    end
-  end
-
-  defp extract_node_line(_), do: nil
 
   # ── Helpers ──
 
