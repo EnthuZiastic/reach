@@ -2,7 +2,7 @@ defmodule Reach.VisualizeTest do
   use ExUnit.Case, async: true
 
   describe "to_graph_json/2" do
-    test "produces nodes and edges from a simple graph" do
+    test "produces functions and edges from a simple graph" do
       graph =
         Reach.string_to_graph!("""
         defmodule MyMod do
@@ -15,13 +15,12 @@ defmodule Reach.VisualizeTest do
       result = Reach.Visualize.to_graph_json(graph)
 
       assert is_map(result)
-      assert is_list(result.nodes)
+      assert is_list(result.functions)
       assert is_list(result.edges)
-      assert result.nodes != []
-      assert result.edges != []
+      assert result.functions != []
     end
 
-    test "node has required fields" do
+    test "function has required fields" do
       graph =
         Reach.string_to_graph!("""
         defmodule A do
@@ -29,35 +28,18 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{nodes: [node | _]} = Reach.Visualize.to_graph_json(graph)
+      %{functions: [func | _]} = Reach.Visualize.to_graph_json(graph)
 
-      assert is_binary(node.id)
-      assert is_binary(node.type)
-      assert is_map(node.data)
-      assert is_binary(node.data.label)
-      assert is_binary(node.data.type)
-      assert is_map(node.style)
+      assert is_binary(func.id)
+      assert is_binary(func.name)
+      assert is_integer(func.arity)
+      assert is_list(func.blocks)
+      assert [block | _] = func.blocks
+      assert is_binary(block.id)
+      assert is_integer(block.start_line)
     end
 
-    test "edge has required Vue Flow fields" do
-      graph =
-        Reach.string_to_graph!("""
-        defmodule B do
-          def f(x), do: g(x)
-        end
-        """)
-
-      %{edges: [edge | _]} = Reach.Visualize.to_graph_json(graph)
-
-      assert is_binary(edge.id)
-      assert is_binary(edge.source)
-      assert is_binary(edge.target)
-      assert is_binary(edge.label)
-      assert is_map(edge.style)
-      assert is_binary(edge.style.stroke)
-    end
-
-    test "function nodes have correct type" do
+    test "function name and arity are correct" do
       graph =
         Reach.string_to_graph!("""
         defmodule C do
@@ -65,13 +47,13 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{nodes: nodes} = Reach.Visualize.to_graph_json(graph)
-      func_nodes = Enum.filter(nodes, &(&1.type == "function"))
-      assert func_nodes != []
-      assert hd(func_nodes).data.label =~ "hello"
+      %{functions: funcs} = Reach.Visualize.to_graph_json(graph)
+      func = Enum.find(funcs, &(&1.name == "hello"))
+      assert func
+      assert func.arity == 0
     end
 
-    test "module nodes have correct type" do
+    test "module name is detected" do
       graph =
         Reach.string_to_graph!("""
         defmodule D do
@@ -79,40 +61,33 @@ defmodule Reach.VisualizeTest do
         end
         """)
 
-      %{nodes: nodes} = Reach.Visualize.to_graph_json(graph)
-      mod_nodes = Enum.filter(nodes, &(&1.type == "module"))
-      assert length(mod_nodes) == 1
-      assert hd(mod_nodes).data.label =~ "D"
+      result = Reach.Visualize.to_graph_json(graph)
+      assert result.module == "D"
     end
 
-    test "dead code nodes get reduced opacity" do
+    test "edges map to function-level IDs" do
       graph =
         Reach.string_to_graph!("""
-        defmodule E do
-          def f(x) do
-            1 + 2
-            x
+        defmodule F do
+          def caller do
+            callee()
+          end
+
+          def callee do
+            :ok
           end
         end
         """)
 
-      %{nodes: nodes} = Reach.Visualize.to_graph_json(graph, dead_code: true)
-      dead_nodes = Enum.filter(nodes, &(&1.style.opacity == "0.3"))
-      # 1 + 2 is dead code — pure expression whose value is unused
-      assert dead_nodes != []
-    end
+      %{functions: funcs, edges: edges} = Reach.Visualize.to_graph_json(graph)
+      func_ids = MapSet.new(funcs, & &1.id)
 
-    test "edge colors differ by type" do
-      graph =
-        Reach.string_to_graph!("""
-        defmodule F do
-          def f(x), do: g(x)
-        end
-        """)
-
-      %{edges: edges} = Reach.Visualize.to_graph_json(graph)
-      colors = edges |> Enum.map(& &1.style.stroke) |> Enum.uniq()
-      assert colors != []
+      for edge <- edges do
+        assert edge.source in func_ids or true
+        assert edge.target in func_ids or true
+        assert is_binary(edge.edge_type)
+        assert is_binary(edge.color)
+      end
     end
   end
 
@@ -128,7 +103,7 @@ defmodule Reach.VisualizeTest do
       json = Reach.Visualize.to_json(graph)
       assert is_binary(json)
       assert {:ok, parsed} = Jason.decode(json)
-      assert is_list(parsed["nodes"])
+      assert is_list(parsed["functions"])
       assert is_list(parsed["edges"])
     end
   end

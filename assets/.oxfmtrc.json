@@ -21,6 +21,10 @@
     ]
   },
   "ignorePatterns": [
-    "js/elk.bundled.js"
+    "js/elk.bundled.js",
+    "js/components/*.compiled.*",
+    "js/components/TestGraph.vue",
+    "node_modules",
+    "js/components/*.vue"
   ]
 }

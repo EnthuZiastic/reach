@@ -34,6 +34,9 @@
   },
   "ignorePatterns": [
     "node_modules",
-    "js/elk.bundled.js"
+    "js/elk.bundled.js",
+    "js/components/*.compiled.*",
+    "js/components/TestGraph.vue",
+    "js/components/*.vue"
   ]
 }

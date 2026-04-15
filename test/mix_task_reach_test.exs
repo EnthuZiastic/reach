@@ -24,7 +24,7 @@ defmodule Mix.Tasks.ReachTest do
     assert File.exists?(html_path)
 
     content = File.read!(html_path)
-    assert content =~ "cytoscape"
+    assert content =~ "graphData"
     assert content =~ "graphData"
     assert content =~ "graphData"
   end
@@ -57,7 +57,7 @@ defmodule Mix.Tasks.ReachTest do
     json_path = Path.join(@output_dir, "reach.json")
     assert File.exists?(json_path)
     assert {:ok, data} = Jason.decode(File.read!(json_path))
-    assert is_list(data["nodes"])
+    assert is_list(data["functions"])
     assert is_list(data["edges"])
   end
 

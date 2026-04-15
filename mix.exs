@@ -45,7 +45,7 @@ defmodule Reach.MixProject do
         "test"
       ],
       "assets.build": [
-        "volt.build --entry assets/js/app.ts --outdir priv/static --no-hash --name reach"
+        "volt.build --entry assets/js/app.js --outdir priv/static --no-hash --name reach"
       ]
     ]
   end
@@ -57,6 +57,8 @@ defmodule Reach.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:jason, "~> 1.0", optional: true},
+      {:makeup, "~> 1.0", optional: true},
+      {:makeup_elixir, "~> 1.0", optional: true},
       {:volt, "~> 0.4", only: :dev, runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
@@ -79,6 +81,21 @@ defmodule Reach.MixProject do
       source_url: @source_url,
       source_ref: "master"
     ]
+  end
+
+  def build_assets(_) do
+    {:ok, _result} =
+      Volt.Builder.build(
+        entry: "assets/js/app.js",
+        outdir: "priv/static",
+        hash: false,
+        name: "reach",
+        sourcemap: false,
+        code_splitting: false,
+        define: %{"process.env.NODE_ENV" => ~s("production")},
+        aliases: %{"@reach" => "assets/js"},
+        node_modules: Path.expand("assets/node_modules")
+      )
   end
 
   defp package do

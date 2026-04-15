@@ -31,16 +31,51 @@ defmodule Mix.Tasks.Reach do
 
   @template_path Path.expand("../../../priv/template.html.eex", __DIR__)
   @js_bundle_path Path.expand("../../../priv/static/js/reach.js", __DIR__)
+  @elk_bundle_path Path.expand("../../../assets/node_modules/elkjs/lib/elk.bundled.js", __DIR__)
+  @vue_flow_css_path Path.expand(
+                       "../../../assets/node_modules/@vue-flow/core/dist/style.css",
+                       __DIR__
+                     )
+  @vue_flow_theme_path Path.expand(
+                         "../../../assets/node_modules/@vue-flow/core/dist/theme-default.css",
+                         __DIR__
+                       )
+  @minimap_css_path Path.expand(
+                      "../../../assets/node_modules/@vue-flow/minimap/dist/style.css",
+                      __DIR__
+                    )
+  @controls_css_path Path.expand(
+                       "../../../assets/node_modules/@vue-flow/controls/dist/style.css",
+                       __DIR__
+                     )
 
-  @external_resource @template_path
-  @external_resource @js_bundle_path
+  for path <- [
+        @template_path,
+        @js_bundle_path,
+        @elk_bundle_path,
+        @vue_flow_css_path,
+        @vue_flow_theme_path,
+        @minimap_css_path,
+        @controls_css_path
+      ] do
+    @external_resource path
+  end
 
   @template File.read!(@template_path)
   @js_bundle if File.exists?(@js_bundle_path), do: File.read!(@js_bundle_path), else: ""
-
-  @elk_bundle_path Path.expand("../../../assets/js/elk.bundled.js", __DIR__)
-  @external_resource @elk_bundle_path
   @elk_bundle if File.exists?(@elk_bundle_path), do: File.read!(@elk_bundle_path), else: ""
+  @vue_flow_css Enum.map_join(
+                  [
+                    @vue_flow_css_path,
+                    @vue_flow_theme_path,
+                    @minimap_css_path,
+                    @controls_css_path
+                  ],
+                  "\n",
+                  fn path ->
+                    if File.exists?(path), do: File.read!(path), else: ""
+                  end
+                )
 
   @impl Mix.Task
   def run(args) do
@@ -82,13 +117,17 @@ defmodule Mix.Tasks.Reach do
     File.mkdir_p!(output_dir)
 
     graph_json = Jason.encode!(graph_data)
-    js_bundle = @js_bundle
+    makeup_css = Reach.Visualize.makeup_stylesheet()
 
     html =
       EEx.eval_string(@template,
         graph_json: graph_json,
         elk_bundle: @elk_bundle,
-        js_bundle: js_bundle
+        js_bundle: @js_bundle,
+        vue_flow_css: @vue_flow_css,
+        makeup_css: makeup_css,
+        file: graph_data[:file] || graph_data.file,
+        module: graph_data[:module] || graph_data.module
       )
 
     path = Path.join(output_dir, "index.html")
