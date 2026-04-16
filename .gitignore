@@ -18,3 +18,4 @@ erl_crash.dump
 ex_pdg-*.tar
 priv/static/
 reach-*.tar
+Elixir.Test.beam

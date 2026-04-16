@@ -17,7 +17,6 @@ const nodes = ref([])
 const edges = ref([])
 const selectedModule = ref(null)
 const selectedFunction = ref(null)
-const expandedFunction = ref(null)
 const { fitView, setCenter } = useVueFlow()
 
 async function applyLayout(rawNodes, rawEdges, layoutOverrides = {}) {
@@ -63,7 +62,7 @@ function estimateSize(data) {
   }
 }
 
-function makeCodeNode(id, label, nodeType, data) {
+function makeCodeNode(id, label, nodeType, data, funcId = null) {
   return {
     id,
     type: "code",
@@ -71,6 +70,7 @@ function makeCodeNode(id, label, nodeType, data) {
     data: {
       label,
       nodeType,
+      funcId,
       sourceHtml: data.source_html || data.sourceHtml,
       sourceText: data.source_text || data.sourceText || null,
       lines: data.source_html ? data.source_html.split("\n") : (data.lines || []),
@@ -92,24 +92,7 @@ async function buildControlFlow() {
     for (const func of mod.functions) {
       if (!func.nodes?.length) continue
 
-      // If this function is not expanded, show as a single collapsed node
-      if (expandedFunction.value !== func.id) {
-        const sourceHtml = func.nodes
-          .map((n) => n.source_html)
-          .filter(Boolean)
-          .join("\n")
-
-        allNodes.push(
-          makeCodeNode(func.id, `${mod.module ? mod.module + "." : ""}${func.name}/${func.arity}`, "function", {
-            source_html: sourceHtml,
-            lines: func.nodes.flatMap((n) => n.lines || []),
-            start_line: func.nodes[0]?.start_line,
-          })
-        )
-        continue
-      }
-
-      // Expanded: show all expression nodes
+      // Show all expression nodes
       for (const node of func.nodes) {
         let label = node.label
         if (!label && node.type === "entry") {
@@ -117,7 +100,7 @@ async function buildControlFlow() {
         }
 
         const nodeType = visNodeType(node.type)
-        allNodes.push(makeCodeNode(node.id, label, nodeType, node))
+        allNodes.push(makeCodeNode(node.id, label, nodeType, node, func.id))
       }
 
       for (const edge of func.edges || []) {
@@ -259,7 +242,7 @@ const sidebarModules = computed(() => {
   return cf.map((m) => ({
     name: m.module ?? "(top-level)",
     module: m.module,
-    attributes: m.attributes || [],
+    preamble: m.preamble || null,
     functions: m.functions.map((f) => ({
       id: f.id,
       label: `${f.name}/${f.arity}`,
@@ -267,30 +250,11 @@ const sidebarModules = computed(() => {
   }))
 })
 
-function onNodeDoubleClick(event) {
-  const clickedNode = event.node
-  if (mode.value !== "control_flow") return
 
-  // Check if this is a collapsed function — expand it
-  const cf = props.graphData.control_flow
-  for (const mod of cf) {
-    const func = mod.functions.find((f) => f.id === clickedNode.id)
-    if (func) {
-      if (expandedFunction.value === func.id) {
-        expandedFunction.value = null
-      } else {
-        expandedFunction.value = func.id
-      }
-      rebuild()
-      return
-    }
-  }
-
-  // Check if it's an entry node of an expanded function
-  if (clickedNode.id?.endsWith("_entry")) {
-    const funcId = clickedNode.id.replace("_entry", "")
-    expandedFunction.value = expandedFunction.value === funcId ? null : funcId
-    rebuild()
+function clearSelection() {
+  selectedFunction.value = null
+  for (const n of nodes.value) {
+    n.class = ""
   }
 }
 
@@ -299,9 +263,19 @@ function selectFunction(modName, funcId) {
   selectedFunction.value = funcId
   if (mode.value !== "control_flow") {
     mode.value = "control_flow"
-  } else {
-    expandedFunction.value = funcId
-    rebuild()
+    return
+  }
+  highlightFunction(funcId)
+}
+
+function highlightFunction(funcId) {
+  for (const n of nodes.value) {
+    n.class = n.data.funcId === funcId ? "highlighted" : ""
+  }
+  const entryNode = nodes.value.find((n) => n.id === funcId)
+  if (entryNode) {
+    const size = estimateSize(entryNode.data)
+    setCenter(entryNode.position.x + size.width / 2, entryNode.position.y + size.height / 2, { zoom: 1.2, duration: 300 })
   }
 }
 </script>
@@ -327,12 +301,7 @@ function selectFunction(modName, funcId) {
         <div class="sidebar-title">Functions</div>
         <div v-for="mod in sidebarModules" :key="mod.name" class="sidebar-module">
           <div class="sidebar-module-name">{{ mod.name }}</div>
-          <div v-if="mod.attributes.length" class="sidebar-attrs">
-            <div v-for="attr in mod.attributes" :key="attr.name" class="sidebar-attr">
-              <span class="attr-name">{{ attr.name }}</span>
-              <span v-if="attr.value" class="attr-value"> = {{ attr.value }}</span>
-            </div>
-          </div>
+          <div v-if="mod.preamble" class="sidebar-preamble" v-html="mod.preamble" />
           <button
             v-for="func in mod.functions"
             :key="func.id"
@@ -352,9 +321,11 @@ function selectFunction(modName, funcId) {
         :default-edge-options="{ type: 'smoothstep' }"
         :min-zoom="0.1"
         :max-zoom="3"
-        class="reach-flow"
-        @node-double-click="onNodeDoubleClick"
+        :class="['reach-flow', selectedFunction && 'has-selection']"
       >
+        <template #pane>
+          <div style="width:100%;height:100%" @click="clearSelection" />
+        </template>
         <MiniMap pannable zoomable />
         <Controls />
       </VueFlow>

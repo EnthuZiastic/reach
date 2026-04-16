@@ -38,7 +38,7 @@ const showLabel = props.data.label && props.data.nodeType !== "expression" && pr
     <div v-if="showLabel" class="code-node-header" :style="{ background: colors.header, color: colors.headerText }">
       {{ data.label }}
     </div>
-    <div v-if="lines.length" class="code-node-body">
+    <div v-if="lines.length" class="code-node-body highlight">
       <table class="code-table">
         <tr v-for="(line, i) in lines" :key="i">
           <td class="line-number">{{ data.startLine + i }}</td>

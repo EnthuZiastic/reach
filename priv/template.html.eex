@@ -24,14 +24,16 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ro
 .sidebar-func { display: block; width: 100%; text-align: left; padding: 4px 12px 4px 20px; border: none; background: none; color: #475569; font-size: 12px; font-family: ui-monospace, SFMono-Regular, monospace; cursor: pointer; }
 .sidebar-func:hover { background: #f1f5f9; }
 .sidebar-func.active { background: #eff6ff; color: #1d4ed8; font-weight: 600; }
-.sidebar-attrs { padding: 2px 12px 4px; }
-.sidebar-attr { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: #64748b; line-height: 1.4; }
+.sidebar-preamble { padding: 4px 12px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: #64748b; line-height: 1.5; border-bottom: 1px solid #f1f5f9; white-space: pre; overflow-x: hidden; text-overflow: ellipsis; }
 .attr-name { color: #7c3aed; }
 .attr-value { color: #64748b; }
 .reach-flow { flex: 1; }
 
 /* Code node styling */
 .code-node { border: 2px solid #94a3b8; border-radius: 6px; background: #fff; min-width: 180px; max-width: 600px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); overflow: hidden; }
+.vue-flow__node.highlighted .code-node { box-shadow: 0 0 0 3px #3b82f6, 0 2px 8px rgba(59,130,246,0.3); }
+.has-selection .vue-flow__node:not(.highlighted) { opacity: 0.35; transition: opacity 0.2s; }
+.has-selection .vue-flow__node.highlighted { opacity: 1; transition: opacity 0.2s; }
 .code-node-header { padding: 4px 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .code-node-body { padding: 0; background: #fafafa; }
 .code-table { border-collapse: collapse; width: 100%; }

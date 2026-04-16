@@ -174,26 +174,16 @@ defmodule Reach.Visualize do
         true
 
       # Ecto query DSL macros injected as local calls
-      tgt_fn in [
-        :from,
-        :assoc,
-        :is_nil,
-        :field,
-        :type,
-        :selected_as,
-        :coalesce,
-        :fragment,
-        :subquery,
-        :dynamic,
-        :select_merge
-      ] and
-          tgt_ar <= 3 ->
+      ecto_dsl_macro?(tgt_fn, tgt_ar) ->
         true
 
       true ->
         false
     end
   end
+
+  @ecto_dsl_macros ~w(from assoc is_nil field type selected_as coalesce fragment subquery dynamic select_merge)a
+  defp ecto_dsl_macro?(fn_name, arity), do: fn_name in @ecto_dsl_macros and arity <= 3
 
   defp ecto_binding?(mod) when is_atom(mod) do
     s = Atom.to_string(mod)
