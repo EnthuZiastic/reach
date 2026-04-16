@@ -1,7 +1,7 @@
 defmodule Reach.Visualize.ControlFlow do
   @moduledoc false
 
-  alias Reach.{IR, Visualize}
+  alias Reach.{ControlFlow, IR, Visualize}
 
   def build(all_nodes, _graph) do
     modules =
@@ -169,367 +169,327 @@ defmodule Reach.Visualize.ControlFlow do
 
   # ── Expression-level nodes from AST ──
 
+  # ── CFG-based expression nodes ──
+
   defp build_expression_nodes(func, file, func_start) do
-    source = Visualize.extract_func_source(func)
     func_end = func_end_line(func, file)
 
     if func_end <= func_start do
+      source = Visualize.extract_func_source(func)
       fallback_single_block(func, source, func_start)
     else
-      build_multi_line_function(func, file, source, func_start, func_end)
+      build_from_cfg(func, file, func_start, func_end)
     end
   end
 
-  defp build_multi_line_function(func, file, source, func_start, func_end) do
-    case parse_function_ast(source) do
-      {:ok, body_exprs} ->
-        offset = func_start - 1
-        func_id = to_string(func.id)
+  defp build_from_cfg(func, file, func_start, func_end) do
+    cfg = ControlFlow.build(func)
+    all_ir = IR.all_nodes(func)
+    node_map = Map.new(all_ir, &{&1.id, &1})
+    func_id = to_string(func.id)
 
-        entry =
-          make_node(
-            func_id,
-            :entry,
-            "#{func.meta[:name]}/#{func.meta[:arity]}",
-            func_start,
-            func_start,
-            highlight_line(file, func_start)
-          )
+    # Get CFG vertices with valid source lines (skip nil/def-line nodes)
+    ir_vertices =
+      cfg
+      |> Graph.vertices()
+      |> Enum.filter(fn v ->
+        is_integer(v) and Map.has_key?(node_map, v) and
+          span_field(Map.get(node_map, v), :start_line) not in [nil, func_start]
+      end)
+      |> Enum.sort_by(fn v -> span_field(Map.get(node_map, v), :start_line) || 0 end)
 
-        exit_node =
-          make_node(
-            "#{func.id}_exit",
-            :exit,
-            "end",
-            func_end,
-            func_end,
-            highlight_line(file, func_end)
-          )
+    if ir_vertices == [] do
+      source = Visualize.extract_func_source(func)
+      fallback_single_block(func, source, func_start)
+    else
+      # Assign line ranges: each vertex extends to the next vertex's start - 1
+      vertex_ranges = compute_vertex_ranges(ir_vertices, node_map, func_start, func_end)
 
-        {body_nodes, body_edges, body_leaves} =
-          walk_body(body_exprs, func_id, file, offset, max(func_start, func_end - 1))
+      # Detect which vertices are branch points
+      branch_vertices = detect_branches(cfg)
 
-        entry_edge = seq_edge(entry.id, first_id(body_nodes))
+      # Build visualization blocks by merging consecutive sequential vertices
+      blocks = build_viz_blocks(ir_vertices, cfg, vertex_ranges, branch_vertices)
 
-        exit_edges =
-          if length(body_leaves) > 1 do
-            Enum.map(body_leaves, &converge_edge(&1, exit_node.id))
-          else
-            Enum.map(body_leaves, &seq_edge(&1, exit_node.id))
-          end
-          |> Enum.reject(&is_nil/1)
+      # Convert blocks to visualization nodes
+      viz_nodes = blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file)
 
-        all_nodes = [entry | body_nodes] ++ [exit_node]
-        all_edges = Enum.reject([entry_edge | body_edges] ++ exit_edges, &is_nil/1)
+      # Build edges from CFG
+      block_for_vertex = build_block_map(blocks)
+      viz_edges = build_viz_edges(cfg, block_for_vertex, branch_vertices, node_map)
 
-        {all_nodes, all_edges}
+      # Add entry and exit
+      entry =
+        make_node(
+          func_id,
+          :entry,
+          "#{func.meta[:name]}/#{func.meta[:arity]}",
+          func_start,
+          func_start,
+          highlight_line(file, func_start)
+        )
 
-      _ ->
-        fallback_single_block(func, source, func_start)
+      exit_node =
+        make_node(
+          "#{func.id}_exit",
+          :exit,
+          "end",
+          func_end,
+          func_end,
+          highlight_line(file, func_end)
+        )
+
+      # Connect entry to first block
+      first_block_id = find_entry_target(cfg, block_for_vertex)
+      entry_edge = if first_block_id, do: seq_edge(func_id, first_block_id)
+
+      # Connect last blocks to exit
+      exit_targets = find_exit_predecessors(cfg, block_for_vertex)
+
+      exit_edges =
+        if length(exit_targets) > 1 do
+          Enum.map(exit_targets, &converge_edge(&1, "#{func.id}_exit"))
+        else
+          Enum.map(exit_targets, &seq_edge(&1, "#{func.id}_exit"))
+        end
+        |> Enum.reject(&is_nil/1)
+
+      all_nodes = [entry | viz_nodes] ++ [exit_node]
+      all_edges = Enum.reject([entry_edge | viz_edges] ++ exit_edges, &is_nil/1)
+      {all_nodes, all_edges}
     end
   end
 
-  defp connect_leaves(_prev_leaves, _target, 0), do: []
-
-  defp connect_leaves(prev_leaves, target, _idx) do
-    edge_fn = if length(prev_leaves) > 1, do: &converge_edge/2, else: &seq_edge/2
-    prev_leaves |> Enum.map(&edge_fn.(&1, target)) |> Enum.reject(&is_nil/1)
-  end
-
-  defp resolve_start(line, _prev_end, _fallback, offset) when is_integer(line), do: line + offset
-
-  defp resolve_start(nil, prev_end, _fallback, _offset) when is_integer(prev_end),
-    do: prev_end + 1
-
-  defp resolve_start(nil, nil, fallback, _offset) when is_integer(fallback), do: fallback
-  defp resolve_start(nil, nil, _fallback, offset), do: 1 + offset
-
-  defp expr_end_line(meta, offset, next_start, line) do
-    case get_in(meta, [:end, :line]) do
-      nil -> if next_start, do: next_start - 1, else: line
-      end_l -> end_l + offset
-    end
-  end
-
-  # Walks a list of expressions, returns {nodes, edges, leaf_ids}.
-  # leaf_ids are the IDs of nodes from which flow exits this body
-  # (the last expression's leaves, or last sequential node).
-
-  defp compute_starts(exprs, offset, fallback_line) do
-    {starts, _} =
-      Enum.map_reduce(exprs, nil, fn expr, prev_end ->
-        meta = extract_meta(expr)
-        start = resolve_start(meta[:line], prev_end, fallback_line, offset)
-        end_l = get_in(meta, [:end, :line]) || meta[:line]
-        actual_end = if end_l, do: end_l + offset, else: start
-        {start, actual_end}
+  defp compute_vertex_ranges(ir_vertices, node_map, func_start, func_end) do
+    lines =
+      Enum.map(ir_vertices, fn v ->
+        n = Map.fetch!(node_map, v)
+        span_field(n, :start_line) || func_start
       end)
 
-    starts
+    ir_vertices
+    |> Enum.with_index()
+    |> Map.new(fn {v, idx} ->
+      start_l = Enum.at(lines, idx)
+      next_l = Enum.at(lines, idx + 1)
+      end_l = if next_l, do: next_l - 1, else: func_end - 1
+      {v, {max(start_l, func_start + 1), max(start_l, end_l)}}
+    end)
   end
 
-  defp walk_body([], _parent_id, _file, _offset, _body_end), do: {[], [], []}
+  defp detect_branches(cfg) do
+    cfg
+    |> Graph.edges()
+    |> Enum.filter(fn e ->
+      match?({:clause_match, _}, e.label) or e.label in [:true_branch, :false_branch]
+    end)
+    |> Enum.map(& &1.v1)
+    |> MapSet.new()
+  end
 
-  defp walk_body(exprs, parent_id, file, offset, body_end) do
-    starts = compute_starts(exprs, offset, body_end)
-    indexed = Enum.with_index(exprs)
+  defp build_viz_blocks(ir_vertices, cfg, _vertex_ranges, branch_vertices) do
+    in_degree = Enum.frequencies_by(Graph.edges(cfg), & &1.v2)
+    out_edges_by = Enum.group_by(Graph.edges(cfg), & &1.v1)
 
-    {all_nodes, all_edges, last_leaves} =
-      Enum.reduce(indexed, {[], [], []}, fn {expr, idx}, {nodes_acc, edges_acc, prev_leaves} ->
-        meta = extract_meta(expr)
-        line = Enum.at(starts, idx)
-        next_start = Enum.at(starts, idx + 1)
-        last_boundary = if(is_nil(next_start) and body_end, do: body_end + 1, else: next_start)
-        end_line = expr_end_line(meta, offset, last_boundary, line)
+    ir_vertices
+    |> Enum.reduce([], fn v, blocks ->
+      try_merge_into_block(v, blocks, branch_vertices, in_degree, out_edges_by, cfg)
+    end)
+    |> Enum.reverse()
+  end
 
-        expr_id = "#{parent_id}_e#{idx}"
+  defp try_merge_into_block(
+         v,
+         [[prev_v | _] = prev_block | rest],
+         branch_vertices,
+         in_degree,
+         out_edges_by,
+         cfg
+       ) do
+    if mergeable_vertex?(v, branch_vertices, in_degree, out_edges_by) and
+         sequential_prev?(prev_v, branch_vertices, out_edges_by) and
+         connected_sequential?(List.last(prev_block), v, cfg) do
+      [prev_block ++ [v] | rest]
+    else
+      [[v], prev_block | rest]
+    end
+  end
 
-        {expr_nodes, expr_edges, expr_leaves} =
-          build_expr_node(expr, expr_id, parent_id, file, line, end_line, offset)
+  defp try_merge_into_block(v, blocks, _bv, _in, _out, _cfg), do: [[v] | blocks]
 
-        first_target = first_id(expr_nodes)
+  defp mergeable_vertex?(v, branch_vertices, in_degree, out_edges_by) do
+    v not in branch_vertices and
+      Map.get(in_degree, v, 0) <= 1 and
+      not Enum.any?(Map.get(out_edges_by, v, []), &match?({:clause_match, _}, &1.label))
+  end
 
-        connect_edges = connect_leaves(prev_leaves, first_target, idx)
-
-        {nodes_acc ++ expr_nodes, edges_acc ++ connect_edges ++ expr_edges, expr_leaves}
+  defp sequential_prev?(prev_v, branch_vertices, out_edges_by) do
+    prev_v not in branch_vertices and
+      not Enum.any?(Map.get(out_edges_by, prev_v, []), fn e ->
+        match?({:clause_match, _}, e.label) or e.label in [:true_branch, :false_branch]
       end)
-
-    merge_sequential(all_nodes, all_edges, last_leaves, file)
   end
 
-  defp merge_sequential(nodes, edges, leaves, file) do
-    edge_targets = Enum.frequencies_by(edges, & &1.target)
-    edge_sources = Enum.frequencies_by(edges, & &1.source)
-    seq_ids = MapSet.new(nodes |> Enum.filter(&(&1.type == :sequential)) |> Enum.map(& &1.id))
+  defp connected_sequential?(from, to, cfg) do
+    Graph.edges(cfg, from, to) |> Enum.any?(&(&1.label == :sequential))
+  end
 
-    seq_edges =
-      MapSet.new(
-        edges
-        |> Enum.filter(&(&1.edge_type == :sequential))
-        |> Enum.map(&{&1.source, &1.target})
+  defp blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file) do
+    Enum.map(blocks, &block_to_viz_node(&1, vertex_ranges, branch_vertices, node_map, file))
+  end
+
+  defp block_to_viz_node(block, vertex_ranges, branch_vertices, node_map, file) do
+    first_v = hd(block)
+    {start_l, _} = Map.fetch!(vertex_ranges, first_v)
+    {_, end_l} = Map.fetch!(vertex_ranges, List.last(block))
+    node = Map.get(node_map, first_v)
+    type = block_type(first_v, node, branch_vertices)
+    label = block_label(type, node)
+    block_id = "b_" <> Enum.map_join(block, "_", &to_string/1)
+
+    source =
+      if(type == :branch,
+        do: highlight_line(file, start_l),
+        else: highlight_lines(file, start_l, end_l)
       )
 
-    mergeable? = fn id ->
-      id in seq_ids and Map.get(edge_targets, id, 0) == 1 and Map.get(edge_sources, id, 0) <= 1
-    end
-
-    {merged_nodes, id_map} =
-      Enum.reduce(nodes, {[], %{}}, fn node, {acc, remap} ->
-        try_merge_node(node, acc, remap, mergeable?, file, seq_edges)
-      end)
-
-    merged_nodes = Enum.reverse(merged_nodes)
-    kept_ids = MapSet.new(merged_nodes, & &1.id)
-
-    merged_edges =
-      edges
-      |> Enum.map(fn e ->
-        %{e | source: remap_id(id_map, e.source), target: remap_id(id_map, e.target)}
-      end)
-      |> Enum.reject(&(&1.source == &1.target))
-      |> Enum.filter(&(&1.source in kept_ids and &1.target in kept_ids))
-
-    merged_leaves = leaves |> Enum.map(&remap_id(id_map, &1)) |> Enum.uniq()
-
-    {merged_nodes, merged_edges, merged_leaves}
+    make_node(block_id, type, label, start_l, end_l, source)
   end
 
-  defp try_merge_node(
-         node,
-         [%{type: :sequential} = prev | rest],
-         remap,
-         mergeable?,
-         file,
-         seq_edges
-       ) do
-    prev_ids = [prev.id | Enum.filter(Map.keys(remap), fn k -> Map.get(remap, k) == prev.id end)]
-    connected? = Enum.any?(prev_ids, fn pid -> {pid, node.id} in seq_edges end)
+  defp block_type(vertex, node, branch_vertices) do
+    cond do
+      vertex in branch_vertices -> :branch
+      node && node.meta[:kind] in [:case_clause, :true_branch, :false_branch] -> :clause
+      true -> :sequential
+    end
+  end
 
-    if node.type == :sequential and mergeable?.(node.id) and connected? do
-      combined = %{
-        prev
-        | end_line: node.end_line,
-          source_html: highlight_lines(file, prev.start_line, node.end_line)
-      }
+  defp block_label(:branch, node), do: branch_label(node)
+  defp block_label(:clause, node), do: clause_label(node)
+  defp block_label(_, _), do: nil
 
-      {[combined | rest], Map.put(remap, node.id, prev.id)}
+  defp branch_label(%{type: :case, meta: %{kind: kind}})
+       when kind in [:true_branch, :false_branch],
+       do: "if"
+
+  defp branch_label(%{type: :case}), do: "case"
+  defp branch_label(_), do: "branch"
+
+  defp clause_label(%{meta: %{kind: :true_branch}}), do: "true"
+  defp clause_label(%{meta: %{kind: :false_branch}}), do: "false"
+
+  defp clause_label(%{meta: %{kind: :case_clause}} = node) do
+    node.children
+    |> Enum.take(1)
+    |> Enum.map_join(", ", &ir_label/1)
+    |> case do
+      "" -> "_"
+      s -> String.slice(s, 0, 40)
+    end
+  end
+
+  defp clause_label(_), do: nil
+
+  defp build_block_map(blocks) do
+    for block <- blocks, v <- block, into: %{} do
+      block_id = "b_" <> Enum.map_join(block, "_", &to_string/1)
+      {v, block_id}
+    end
+  end
+
+  defp build_viz_edges(cfg, block_for_vertex, branch_vertices, node_map) do
+    cfg
+    |> Graph.edges()
+    |> Enum.flat_map(fn e ->
+      resolve_edge(e, cfg, block_for_vertex, branch_vertices, node_map)
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq_by(&{&1.source, &1.target})
+  end
+
+  defp resolve_edge(e, cfg, block_map, branch_vertices, node_map) do
+    src_block = resolve_to_block(e.v1, cfg, block_map, :in)
+    tgt_block = resolve_to_block(e.v2, cfg, block_map, :out)
+
+    if src_block && tgt_block && src_block != tgt_block do
+      {edge_type, label, color} = classify_cfg_edge(e, branch_vertices, node_map)
+
+      [
+        %{
+          id: "cfg_#{e.v1}_#{e.v2}",
+          source: src_block,
+          target: tgt_block,
+          label: label,
+          edge_type: edge_type,
+          color: color
+        }
+      ]
     else
-      {[node, prev | rest], remap}
+      []
     end
   end
 
-  defp try_merge_node(node, acc, remap, _mergeable?, _file, _seq_edges), do: {[node | acc], remap}
+  defp resolve_to_block(v, cfg, block_map, dir),
+    do: resolve_to_block(v, cfg, block_map, dir, MapSet.new())
 
-  defp remap_id(map, id), do: Map.get(map, id, id)
+  defp resolve_to_block(v, _cfg, _block_map, _dir, _visited) when not is_integer(v), do: nil
 
-  defp build_expr_node(expr, id, parent_id, file, line, end_line, offset) do
-    case classify_expr(expr) do
-      :branch_if ->
-        inner = unwrap_branch(expr)
-        {nodes, edges, leaves} = build_if_node(inner, id, parent_id, file, line, end_line, offset)
-        add_pipe_tail(expr, inner, id, {nodes, edges, leaves}, file, end_line, offset)
+  defp resolve_to_block(v, cfg, block_map, dir, visited) do
+    if v in visited, do: nil, else: do_resolve(v, cfg, block_map, dir, MapSet.put(visited, v))
+  end
 
-      :branch_case ->
-        inner = unwrap_branch(expr)
+  defp do_resolve(v, cfg, block_map, dir, visited) do
+    case Map.get(block_map, v) do
+      nil ->
+        next_vertices =
+          if dir == :out,
+            do: Graph.out_edges(cfg, v) |> Enum.map(& &1.v2),
+            else: Graph.in_edges(cfg, v) |> Enum.map(& &1.v1)
 
-        {nodes, edges, leaves} =
-          build_case_node(inner, id, parent_id, file, line, end_line, offset)
+        Enum.find_value(next_vertices, fn nv ->
+          resolve_to_block(nv, cfg, block_map, dir, visited)
+        end)
 
-        add_pipe_tail(expr, inner, id, {nodes, edges, leaves}, file, end_line, offset)
-
-      _ ->
-        node =
-          make_node(id, :sequential, nil, line, end_line, highlight_lines(file, line, end_line))
-
-        {[node], [], [id]}
+      block_id ->
+        block_id
     end
   end
 
-  defp add_pipe_tail(outer, inner, id, {nodes, edges, leaves}, file, end_line, offset) do
-    if outer == inner do
-      {nodes, edges, leaves}
+  defp classify_cfg_edge(%{label: {:clause_match, idx}} = edge, _bv, node_map) do
+    target_node = Map.get(node_map, edge.v2)
+
+    label =
+      if target_node, do: clause_label(target_node) || "clause #{idx}", else: "clause #{idx}"
+
+    {:branch, label, clause_color(idx)}
+  end
+
+  defp classify_cfg_edge(%{label: :true_branch}, _bv, _nm), do: {:branch, "true", "#16a34a"}
+  defp classify_cfg_edge(%{label: :false_branch}, _bv, _nm), do: {:branch, "false", "#dc2626"}
+  defp classify_cfg_edge(%{label: :return}, _bv, _nm), do: {:sequential, "", "#94a3b8"}
+
+  defp classify_cfg_edge(edge, branch_vertices, node_map) do
+    target_kind = get_in(node_map, [edge.v2, Access.key(:meta, %{}), :kind])
+
+    if edge.v2 in branch_vertices or target_kind in [:true_branch, :false_branch, :case_clause] do
+      {:branch, "", "#94a3b8"}
     else
-      inner_end = get_in(extract_meta(inner), [:end, :line])
-
-      if inner_end do
-        tail_id = "#{id}_pipe"
-        pipe_start = inner_end + offset + 1
-        pipe_end = max(pipe_start, end_line)
-
-        tail =
-          make_node(
-            tail_id,
-            :sequential,
-            nil,
-            pipe_start,
-            pipe_end,
-            highlight_lines(file, pipe_start, pipe_end)
-          )
-
-        conv = leaves |> Enum.map(&converge_edge(&1, tail_id)) |> Enum.reject(&is_nil/1)
-        {nodes ++ [tail], edges ++ conv, [tail_id]}
-      else
-        {nodes, edges, leaves}
-      end
+      {:sequential, "", "#94a3b8"}
     end
   end
 
-  # ── If/unless node ──
-
-  defp build_if_node(expr, id, _parent_id, file, _line, _end_line, offset) do
-    {form, meta, [_cond | rest]} = expr
-    if_line = (meta[:line] || 1) + offset
-    if_end = (get_in(meta, [:end, :line]) || meta[:line] || 1) + offset
-
-    blocks =
-      case rest do
-        [kw] when is_list(kw) -> kw
-        _ -> [do: nil]
-      end
-
-    label = to_string(form)
-    branch_node = make_node(id, :branch, label, if_line, if_line, highlight_line(file, if_line))
-
-    do_body = blocks[:do]
-    else_body = blocks[:else]
-
-    do_end = if else_body, do: (body_start_line(else_body, offset) || if_end) - 1, else: if_end
-    {do_nodes, do_edges, do_leaves} = build_arm(do_body, "#{id}_do", id, file, offset, do_end)
-    do_edge = branch_edge(id, first_id(do_nodes), "true", "#16a34a")
-
-    {else_nodes, else_edges, else_leaves, else_edge} =
-      if else_body do
-        {en, ee, el} = build_arm(else_body, "#{id}_else", id, file, offset, if_end)
-        {en, ee, el, branch_edge(id, first_id(en), "false", "#dc2626")}
-      else
-        {[], [], [id], nil}
-      end
-
-    all_nodes = [branch_node] ++ do_nodes ++ else_nodes
-    all_edges = Enum.reject([do_edge, else_edge], &is_nil/1) ++ do_edges ++ else_edges
-    all_leaves = do_leaves ++ else_leaves
-
-    {all_nodes, all_edges, all_leaves}
+  defp find_entry_target(cfg, block_for_vertex) do
+    cfg
+    |> Graph.out_edges(:entry)
+    |> Enum.find_value(fn e -> resolve_to_block(e.v2, cfg, block_for_vertex, :out) end)
   end
 
-  # ── Case node ──
-
-  defp build_case_node(expr, id, _parent_id, file, _line, _end_line, offset) do
-    {:case, meta, [_matched, [do: clauses]]} = expr
-    case_line = (meta[:line] || 1) + offset
-    case_end = (get_in(meta, [:end, :line]) || meta[:line] || 1) + offset
-
-    branch_node =
-      make_node(id, :branch, "case", case_line, case_line, highlight_line(file, case_line))
-
-    clause_starts =
-      Enum.map(clauses, fn {:->, cm, _} -> (cm[:line] || 1) + offset end)
-
-    {clause_nodes, clause_edges, clause_leaves} =
-      clauses
-      |> Enum.with_index()
-      |> Enum.reduce({[], [], []}, fn {{:->, clause_meta, [patterns, body]}, idx},
-                                      {n_acc, e_acc, l_acc} ->
-        clause_line = (clause_meta[:line] || 1) + offset
-        pattern_str = Macro.to_string(hd(patterns)) |> String.slice(0, 40)
-        clause_id = "#{id}_c#{idx}"
-
-        clause_node =
-          make_node(
-            clause_id,
-            :clause,
-            pattern_str,
-            clause_line,
-            clause_line,
-            highlight_line(file, clause_line)
-          )
-
-        same_line? = clause_body_inline?(body, clause_line, offset)
-
-        {arm_nodes, arm_edges, arm_leaves} =
-          if same_line? do
-            {[], [], []}
-          else
-            clause_arm_end(clause_starts, idx, case_end, body, clause_id, id, file, offset)
-          end
-
-        edge = branch_edge(id, clause_id, pattern_str, clause_color(idx))
-        arm_edge = seq_edge(clause_id, first_id(arm_nodes))
-
-        leaves = if arm_leaves == [], do: [clause_id], else: arm_leaves
-
-        {n_acc ++ [clause_node | arm_nodes],
-         e_acc ++ Enum.reject([edge, arm_edge | arm_edges], &is_nil/1), l_acc ++ leaves}
-      end)
-
-    {[branch_node | clause_nodes], clause_edges, clause_leaves}
-  end
-
-  defp clause_arm_end(clause_starts, idx, case_end, body, clause_id, branch_id, file, offset) do
-    next_clause = Enum.at(clause_starts, idx + 1)
-    arm_end = if next_clause, do: next_clause - 1, else: case_end
-    build_arm(body, clause_id, branch_id, file, offset, arm_end)
-  end
-
-  defp clause_body_inline?(body, clause_line, offset) do
-    body_start = body_start_line(body, offset)
-    body_start == clause_line or (is_nil(body_start) and not match?({:__block__, _, _}, body))
-  end
-
-  defp body_start_line(body, offset) do
-    meta = extract_meta(body)
-    if meta[:line], do: meta[:line] + offset, else: nil
-  end
-
-  defp build_arm(body, arm_id, _parent_id, file, offset, arm_line) do
-    exprs =
-      case body do
-        {:__block__, _, es} -> es
-        nil -> []
-        single -> [single]
-      end
-
-    walk_body(exprs, arm_id, file, offset, arm_line)
+  defp find_exit_predecessors(cfg, block_for_vertex) do
+    cfg
+    |> Graph.in_edges(:exit)
+    |> Enum.map(fn e -> resolve_to_block(e.v1, cfg, block_for_vertex, :in) end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
   end
 
   # ── Leaf collection ──
@@ -590,22 +550,6 @@ defmodule Reach.Visualize.ControlFlow do
 
   defp converge_edge(_, _), do: nil
 
-  defp branch_edge(source, target, label, color) when is_binary(target) do
-    %{
-      id: "br_#{source}_#{target}",
-      source: source,
-      target: target,
-      label: label,
-      edge_type: :branch,
-      color: color
-    }
-  end
-
-  defp branch_edge(_, _, _, _), do: nil
-
-  defp first_id([%{id: id} | _]), do: id
-  defp first_id(_), do: nil
-
   defp dispatch_color(0), do: "#16a34a"
   defp dispatch_color(1), do: "#2563eb"
   defp dispatch_color(2), do: "#ea580c"
@@ -617,37 +561,6 @@ defmodule Reach.Visualize.ControlFlow do
   defp clause_color(_), do: "#7c3aed"
 
   # ── AST helpers ──
-
-  defp parse_function_ast(nil), do: :error
-
-  defp parse_function_ast(source) do
-    case Code.string_to_quoted(source, columns: true, token_metadata: true) do
-      {:ok, {:def, _, [_, [do: body]]}} -> {:ok, normalize_body(body)}
-      {:ok, {:defp, _, [_, [do: body]]}} -> {:ok, normalize_body(body)}
-      {:ok, {:def, _, [_, [{:do, body} | _]]}} -> {:ok, normalize_body(body)}
-      {:ok, {:defp, _, [_, [{:do, body} | _]]}} -> {:ok, normalize_body(body)}
-      _ -> :error
-    end
-  end
-
-  defp normalize_body({:__block__, _, exprs}), do: exprs
-  defp normalize_body(nil), do: []
-  defp normalize_body(single), do: [single]
-
-  defp unwrap_branch({:|>, _, [left, _]}), do: unwrap_branch(left)
-  defp unwrap_branch({:=, _, [_, right]}), do: unwrap_branch(right)
-  defp unwrap_branch(expr), do: expr
-
-  defp classify_expr({:if, _, _}), do: :branch_if
-  defp classify_expr({:unless, _, _}), do: :branch_if
-  defp classify_expr({:case, _, _}), do: :branch_case
-  defp classify_expr({:cond, _, _}), do: :branch_cond
-  defp classify_expr({:|>, _, [left, _]}), do: classify_expr(left)
-  defp classify_expr({:=, _, [_, right]}), do: classify_expr(right)
-  defp classify_expr(_), do: :sequential
-
-  defp extract_meta({_, meta, _}) when is_list(meta), do: meta
-  defp extract_meta(_), do: []
 
   # ── Source helpers ──
 
