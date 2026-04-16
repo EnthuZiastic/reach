@@ -18,12 +18,17 @@ Elixir 1.18+ / OTP 27+.
 ```
 
 ```elixir
-# Find what affects a dangerous call
-graph = Reach.file_to_graph!("lib/my_app_web/controllers/user_controller.ex")
+graph = Reach.string_to_graph!("""
+def run(input) do
+  command = String.trim(input)
+  System.cmd("sh", ["-c", command])
+end
+""")
 
-sink = Reach.nodes(graph, type: :call, module: System, function: :cmd) |> hd()
-Reach.backward_slice(graph, sink.id)
-#=> [%IR.Node{type: :call, meta: %{function: :params}, ...}, ...]
+# What affects the System.cmd call?
+[cmd_call] = Reach.nodes(graph, type: :call, module: System, function: :cmd)
+Reach.backward_slice(graph, cmd_call.id)
+#=> traces back through command, String.trim, to the input parameter
 ```
 
 ```elixir
@@ -155,8 +160,9 @@ Reach.Project.taint_analysis(project,
   supervisor child startup ordering.
 - **Interprocedural** — context-sensitive slicing (Horwitz-Reps-Binkley),
   cross-module call resolution, dependency summaries for external packages.
-- **Effect classification** — 30+ pure modules cataloged, type-aware
-  inference from `@spec`, higher-order flow resolution for 1,000+ functions.
+- **Effect classification** — knows which functions are pure, which
+  do I/O, and which send messages. Covers Enum, Map, String, and 30+
+  more modules out of the box.
 
 ## Nodes and edges
 
