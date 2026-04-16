@@ -100,9 +100,44 @@ Enum.filter(edges, &(&1.label == :startup_order))
 
 ```elixir
 def deps do
-  [{:reach, "~> 1.0"}]
+  [
+    {:reach, "~> 1.0"},
+    # Optional: required for mix reach (HTML/JSON output)
+    {:jason, "~> 1.0"},
+    # Optional: syntax highlighting in HTML reports
+    {:makeup, "~> 1.0"},
+    {:makeup_elixir, "~> 1.0"}
+  ]
 end
 ```
+
+## Interactive visualization
+
+```bash
+# Analyze specific files
+mix reach lib/my_app/accounts.ex lib/my_app/auth.ex
+
+# Analyze a whole directory
+mix reach lib/my_app/
+
+# Output as DOT or JSON instead of HTML
+mix reach lib/my_app/server.ex --format dot
+mix reach lib/my_app/server.ex --format json
+
+# Custom output directory
+mix reach lib/my_app/ --output my_report
+```
+
+Generates a self-contained HTML report with three tabs:
+
+- **Control Flow** — expression-level graph with branch/converge edges,
+  syntax-highlighted source blocks, if/case/unless detection
+- **Call Graph** — which functions call which, grouped by module
+- **Data Flow** — variable def→use chains within and across functions
+
+The report is fully offline — no CDN dependencies, everything embedded
+in a single HTML file.
+
 
 ## Building a graph
 
