@@ -23,12 +23,7 @@ defmodule Reach.VisualizeTest do
       graph =
         Reach.string_to_graph!("""
         defmodule A do
-          def f(x) do
-            case x do
-              :a -> 1
-              :b -> 2
-            end
-          end
+          def f(x), do: x
         end
         """)
 

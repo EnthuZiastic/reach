@@ -11,42 +11,14 @@ const props = defineProps({
   graphData: { type: Object, required: true },
 })
 
-const EDGE_TYPES = {
-  data: { color: "#16a34a", label: "Data flow" },
-  control: { color: "#ea580c", label: "Control" },
-  containment: { color: "#94a3b8", label: "Contains" },
-  call: { color: "#7c3aed", label: "Call" },
-  match_binding: { color: "#16a34a", label: "Match bind" },
-  state_read: { color: "#0891b2", label: "State read" },
-  state_pass: { color: "#0891b2", label: "State pass" },
-  higher_order: { color: "#db2777", label: "Higher order" },
-  message_order: { color: "#ca8a04", label: "Message" },
-  summary: { color: "#7c3aed", label: "Summary" },
-}
-
 const nodeTypes = { code: CodeNode, compact: CompactNode }
 const mode = ref("control_flow")
 const nodes = ref([])
 const edges = ref([])
 const selectedModule = ref(null)
 const selectedFunction = ref(null)
+const expandedFunction = ref(null)
 const { fitView, setCenter } = useVueFlow()
-
-function edgeStyle(edgeType) {
-  const color = EDGE_TYPES[edgeType]?.color ?? "#94a3b8"
-  return { stroke: color, strokeWidth: edgeType === "containment" ? 1 : 2 }
-}
-
-function estimateSize(data) {
-  const lineCount = data.lines?.length ?? 1
-  const codeMaxLen = (data.lines ?? []).reduce((m, l) => Math.max(m, l.length), 0)
-  const labelLen = (data.label ?? "").length
-  const maxLen = Math.max(codeMaxLen, labelLen)
-  return {
-    width: Math.min(600, Math.max(180, maxLen * 7.5 + 60)),
-    height: Math.max(40, lineCount * 18 + 30),
-  }
-}
 
 async function applyLayout(rawNodes, rawEdges, layoutOverrides = {}) {
   const nodeIds = rawNodes.map((n) => n.id)
@@ -76,8 +48,22 @@ async function applyLayout(rawNodes, rawEdges, layoutOverrides = {}) {
   fitView({ padding: 0.1 })
 }
 
-function makeCodeNode(id, label, nodeType, block) {
-  const lines = block.source_html ? block.source_html.split("\n") : (block.lines ?? [])
+function estimateSize(data) {
+  if (data.nodeType === "compact") {
+    const len = (data.label ?? "").length
+    return { width: Math.max(100, len * 7.5 + 24), height: 32 }
+  }
+
+  const lineCount = (data.sourceHtml || "").split("\n").length || (data.lines?.length ?? 1)
+  const labelLen = (data.label ?? "").length
+  const maxCodeLen = Math.max(labelLen, ...(data.lines || []).map((l) => l.length))
+  return {
+    width: Math.min(700, Math.max(180, maxCodeLen * 7.5 + 70)),
+    height: Math.max(36, lineCount * 18 + (data.label ? 26 : 8)),
+  }
+}
+
+function makeCodeNode(id, label, nodeType, data) {
   return {
     id,
     type: "code",
@@ -85,13 +71,15 @@ function makeCodeNode(id, label, nodeType, block) {
     data: {
       label,
       nodeType,
-      sourceHtml: block.source_html,
-      sourceText: block.source_html ? null : block.lines?.join("\n"),
-      lines,
-      startLine: block.start_line,
+      sourceHtml: data.source_html || data.sourceHtml,
+      sourceText: data.source_text || data.sourceText || null,
+      lines: data.source_html ? data.source_html.split("\n") : (data.lines || []),
+      startLine: data.start_line || data.startLine || 1,
     },
   }
 }
+
+// ── Control Flow View ──
 
 async function buildControlFlow() {
   const cf = props.graphData.control_flow
@@ -102,26 +90,50 @@ async function buildControlFlow() {
 
   for (const mod of cf) {
     for (const func of mod.functions) {
-      const blocks = func.blocks
+      if (!func.nodes?.length) continue
 
-      for (const b of blocks.blocks) {
-        const label =
-          b.id === func.id
-            ? `${mod.module ? mod.module + "." : ""}${func.name}/${func.arity}`
-            : b.label
+      // If this function is not expanded, show as a single collapsed node
+      if (expandedFunction.value !== func.id) {
+        const sourceHtml = func.nodes
+          .map((n) => n.source_html)
+          .filter(Boolean)
+          .join("\n")
 
-        allNodes.push(makeCodeNode(b.id, label, b.id === func.id ? "function" : "match", b))
+        allNodes.push(
+          makeCodeNode(func.id, `${mod.module ? mod.module + "." : ""}${func.name}/${func.arity}`, "function", {
+            source_html: sourceHtml,
+            lines: func.nodes.flatMap((n) => n.lines || []),
+            start_line: func.nodes[0]?.start_line,
+          })
+        )
+        continue
       }
 
-      for (const e of blocks.edges) {
+      // Expanded: show all expression nodes
+      for (const node of func.nodes) {
+        let label = node.label
+        if (!label && node.type === "entry") {
+          label = `${func.name}/${func.arity}`
+        }
+
+        const nodeType = visNodeType(node.type)
+        allNodes.push(makeCodeNode(node.id, label, nodeType, node))
+      }
+
+      for (const edge of func.edges || []) {
         allEdges.push({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          type: "smoothstep",
-          style: { stroke: e.color, strokeWidth: 2 },
-          label: e.label,
-          labelStyle: { fill: e.color, fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, monospace" },
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          type: edgeStyle(edge.edge_type),
+          style: edgeVisualStyle(edge),
+          label: edge.label,
+          labelStyle: {
+            fill: edge.color,
+            fontSize: 11,
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          },
+          animated: edge.edge_type === "data",
         })
       }
     }
@@ -130,6 +142,33 @@ async function buildControlFlow() {
   await applyLayout(allNodes, allEdges)
 }
 
+function visNodeType(type) {
+  switch (type) {
+    case "entry": return "function"
+    case "exit": return "exit"
+    case "branch": return "match"
+    case "dispatch": return "clause"
+    case "clause": return "clause"
+    default: return "expression"
+  }
+}
+
+function edgeStyle(edgeType) {
+  switch (edgeType) {
+    case "branch": return "smoothstep"
+    case "converge": return "smoothstep"
+    case "data": return "smoothstep"
+    default: return "default"
+  }
+}
+
+function edgeVisualStyle(edge) {
+  const width = edge.edge_type === "sequential" ? 1 : 2
+  return { stroke: edge.color, strokeWidth: width }
+}
+
+// ── Call Graph View ──
+
 async function buildCallGraph() {
   const cg = props.graphData.call_graph
   if (!cg) return
@@ -137,13 +176,12 @@ async function buildCallGraph() {
   const rawNodes = []
   for (const mod of cg.modules) {
     for (const func of mod.functions) {
-      // Use short label for internal functions: just name/arity
       const shortLabel = mod.file ? func.id.split(".").pop() : func.id
       rawNodes.push({
         id: func.id,
         type: "compact",
         position: { x: 0, y: 0 },
-        data: { label: shortLabel, nodeType: mod.file ? "call" : "external" },
+        data: { label: shortLabel, nodeType: "compact" },
       })
     }
   }
@@ -163,6 +201,8 @@ async function buildCallGraph() {
   })
 }
 
+// ── Data Flow View ──
+
 async function buildDataFlow() {
   const df = props.graphData.data_flow
   if (!df) return
@@ -170,7 +210,7 @@ async function buildDataFlow() {
   const rawNodes = df.functions.map((f) =>
     makeCodeNode(f.id, f.module ? `${f.module}.${f.label}` : f.label, "data", {
       source_html: f.source_html,
-      lines: f.source_html ? null : [],
+      lines: [],
       start_line: f.start_line,
     })
   )
@@ -187,6 +227,8 @@ async function buildDataFlow() {
 
   await applyLayout(rawNodes, rawEdges)
 }
+
+// ── Rebuild ──
 
 async function rebuild() {
   try {
@@ -209,30 +251,46 @@ async function rebuild() {
 watch(mode, rebuild)
 onMounted(rebuild)
 
+// ── Sidebar ──
+
 const sidebarModules = computed(() => {
   const cf = props.graphData.control_flow
   if (!cf) return []
   return cf.map((m) => ({
     name: m.module ?? "(top-level)",
     module: m.module,
-    functions: m.functions.map((f) => ({ id: f.id, label: `${f.name}/${f.arity}` })),
+    attributes: m.attributes || [],
+    functions: m.functions.map((f) => ({
+      id: f.id,
+      label: `${f.name}/${f.arity}`,
+    })),
   }))
 })
 
 function onNodeDoubleClick(event) {
-  const node = event.node
-  if (mode.value === "call_graph" && node.data?.label) {
-    // Extract function name from call graph label and navigate to control flow
-    const label = node.data.label
-    const funcName = label.split("/")[0]
-    const cf = props.graphData.control_flow
-    for (const mod of cf) {
-      const func = mod.functions.find((f) => f.name === funcName)
-      if (func) {
-        selectFunction(mod.module, func.id)
-        return
+  const clickedNode = event.node
+  if (mode.value !== "control_flow") return
+
+  // Check if this is a collapsed function — expand it
+  const cf = props.graphData.control_flow
+  for (const mod of cf) {
+    const func = mod.functions.find((f) => f.id === clickedNode.id)
+    if (func) {
+      if (expandedFunction.value === func.id) {
+        expandedFunction.value = null
+      } else {
+        expandedFunction.value = func.id
       }
+      rebuild()
+      return
     }
+  }
+
+  // Check if it's an entry node of an expanded function
+  if (clickedNode.id?.endsWith("_entry")) {
+    const funcId = clickedNode.id.replace("_entry", "")
+    expandedFunction.value = expandedFunction.value === funcId ? null : funcId
+    rebuild()
   }
 }
 
@@ -242,22 +300,8 @@ function selectFunction(modName, funcId) {
   if (mode.value !== "control_flow") {
     mode.value = "control_flow"
   } else {
-    // Find any block belonging to this function
-    // The funcId is the function_def node, but blocks use CFG node IDs
-    // Look up the function's first block ID from the data
-    const cf = props.graphData.control_flow
-    let targetBlockId = funcId
-    for (const mod of cf) {
-      const func = mod.functions.find((f) => f.id === funcId)
-      if (func?.blocks?.blocks?.length) {
-        targetBlockId = func.blocks.blocks[0].id
-        break
-      }
-    }
-    const node = nodes.value.find((n) => n.id === targetBlockId)
-    if (node?.position) {
-      setCenter(node.position.x + 200, node.position.y + 50, { zoom: 1, duration: 300 })
-    }
+    expandedFunction.value = funcId
+    rebuild()
   }
 }
 </script>
@@ -283,6 +327,12 @@ function selectFunction(modName, funcId) {
         <div class="sidebar-title">Functions</div>
         <div v-for="mod in sidebarModules" :key="mod.name" class="sidebar-module">
           <div class="sidebar-module-name">{{ mod.name }}</div>
+          <div v-if="mod.attributes.length" class="sidebar-attrs">
+            <div v-for="attr in mod.attributes" :key="attr.name" class="sidebar-attr">
+              <span class="attr-name">{{ attr.name }}</span>
+              <span v-if="attr.value" class="attr-value"> = {{ attr.value }}</span>
+            </div>
+          </div>
           <button
             v-for="func in mod.functions"
             :key="func.id"
