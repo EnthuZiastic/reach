@@ -138,16 +138,15 @@ defmodule Reach.Visualize.ControlFlow do
       clauses
       |> Enum.with_index()
       |> Enum.map(fn {clause, idx} ->
-        source = extract_clause_source(func, clause, clauses, file)
-        cl_start = span_field(clause, :start_line) || span_field(func, :start_line) || 1
+        {cl_start, cl_end, source} = compute_clause_range_and_source(func, clause, clauses, file)
 
         %{
           id: to_string(clause.id),
           type: :clause,
           label: "clause #{idx + 1}: #{clause_pattern(clause)}",
           start_line: cl_start,
-          end_line: clause_end_line(func, cl_start, clauses, file),
-          source_html: Visualize.highlight_source(source),
+          end_line: cl_end,
+          source_html: clause_source_html(source, clause, idx),
           parent_id: func_id
         }
       end)
@@ -166,7 +165,17 @@ defmodule Reach.Visualize.ControlFlow do
         }
       end)
 
-    {[dispatch | clause_nodes], edges}
+    exit_node = %{
+      id: "#{func_id}_exit",
+      type: :exit,
+      label: "end",
+      start_line: func_end_line(func, file) || (span_field(func, :start_line) || 1),
+      end_line: func_end_line(func, file) || (span_field(func, :start_line) || 1),
+      source_html: nil,
+      parent_id: nil
+    }
+
+    {[dispatch | clause_nodes] ++ [exit_node], edges}
   end
 
   # ── CFG-based expression nodes ──
@@ -368,14 +377,17 @@ defmodule Reach.Visualize.ControlFlow do
         [List.flatten(group)]
 
       {_winners, []} ->
-        priority
+        if length(priority) > 1 do
+          # Multiple branch blocks on same line — merge into one
+          [List.flatten(priority)]
+        else
+          priority
+        end
 
       {winners, _seq} ->
-        # When multiple branch blocks share the same line (nested constructs),
-        # don't merge sequential blocks into them — they belong to different
-        # control flow paths.
         if length(priority) > 1 do
-          priority ++ seq
+          # Multiple branch blocks + seq blocks on same line — merge all
+          [List.flatten(group)]
         else
           absorbed = List.flatten(seq)
           Enum.map(winners, fn block -> block ++ absorbed end)
@@ -384,25 +396,37 @@ defmodule Reach.Visualize.ControlFlow do
   end
 
   defp blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file, cfg) do
-    Enum.map(blocks, &block_to_viz_node(&1, vertex_ranges, branch_vertices, node_map, file, cfg))
-  end
+    blocks
+    |> Enum.with_index()
+    |> Enum.map(fn {block, idx} ->
+      first_v = hd(block)
+      {start_l, _} = Map.fetch!(vertex_ranges, first_v)
+      {_, raw_end_l} = Map.fetch!(vertex_ranges, List.last(block))
 
-  defp block_to_viz_node(block, vertex_ranges, branch_vertices, node_map, file, cfg) do
-    first_v = hd(block)
-    {start_l, _} = Map.fetch!(vertex_ranges, first_v)
-    {_, end_l} = Map.fetch!(vertex_ranges, List.last(block))
-    node = Map.get(node_map, first_v)
-    type = block_type(block, branch_vertices, node_map)
-    label = block_label(type, node, block, node_map, cfg)
-    block_id = "b_" <> Enum.map_join(block, "_", &to_string/1)
+      # Clamp end_line to not overlap with next block's start
+      end_l =
+        if idx + 1 < length(blocks) do
+          next_block = Enum.at(blocks, idx + 1)
+          next_first = hd(next_block)
+          {next_start, _} = Map.fetch!(vertex_ranges, next_first)
+          if next_start > start_l, do: min(raw_end_l, next_start - 1), else: raw_end_l
+        else
+          raw_end_l
+        end
 
-    source =
-      if(type == :branch,
-        do: highlight_line(file, start_l),
-        else: highlight_lines(file, start_l, end_l)
-      )
+      node = Map.get(node_map, first_v)
+      type = block_type(block, branch_vertices, node_map)
+      label = block_label(type, node, block, node_map, cfg)
+      block_id = "b_" <> Enum.map_join(block, "_", &to_string/1)
 
-    make_node(block_id, type, label, start_l, end_l, source)
+      source =
+        if(type == :branch,
+          do: highlight_line(file, start_l),
+          else: highlight_lines(file, start_l, end_l)
+        )
+
+      make_node(block_id, type, label, start_l, end_l, source)
+    end)
   end
 
   defp block_type(block, branch_vertices, node_map) do
@@ -682,5 +706,50 @@ defmodule Reach.Visualize.ControlFlow do
     |> Enum.filter(&(&1.type == :function_def))
     |> Enum.reject(&(to_string(&1.id) in module_func_ids))
     |> Enum.sort_by(&(span_field(&1, :start_line) || 0))
+  end
+
+  defp compute_clause_range_and_source(func, clause, all_clauses, file) do
+    direct_start = span_field(clause, :start_line)
+    child_start = min_child_line(clause)
+
+    cond do
+      direct_start != nil ->
+        end_l = clause_end_line(func, direct_start, all_clauses, file)
+        source = extract_clause_source(func, clause, all_clauses, file)
+        {direct_start, end_l, source}
+
+      child_start != nil ->
+        end_l = clause_end_line(func, child_start, all_clauses, file)
+        if end_l != nil and end_l >= child_start do
+          source = extract_clause_source(func, clause, all_clauses, file)
+          {child_start, end_l, source}
+        else
+          {nil, nil, nil}
+        end
+
+      true ->
+        {nil, nil, nil}
+    end
+  end
+
+  defp clause_source_html(nil, clause, idx) do
+    pattern = clause_pattern(clause)
+    Visualize.highlight_source("clause #{idx + 1}: #{pattern}")
+  end
+
+  defp clause_source_html(source, _clause, _idx) do
+    Visualize.highlight_source(source)
+  end
+
+  defp min_child_line(node) do
+    node.children
+    |> Enum.flat_map(&collect_lines/1)
+    |> Enum.min(fn -> nil end)
+  end
+
+  defp collect_lines(node) do
+    line = span_field(node, :start_line)
+    child_lines = Enum.flat_map(node.children || [], &collect_lines/1)
+    if line, do: [line | child_lines], else: child_lines
   end
 end
