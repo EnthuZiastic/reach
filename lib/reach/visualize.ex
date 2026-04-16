@@ -215,58 +215,34 @@ defmodule Reach.Visualize do
 
     all_nodes = Reach.nodes(graph)
     func_nodes = Enum.filter(all_nodes, &(&1.type == :function_def))
+    node_map = Map.new(all_nodes, &{&1.id, &1})
     node_to_func = build_node_to_func_map(func_nodes)
-    _func_by_id = Map.new(func_nodes, &{&1.id, &1})
 
-    inter_func_edges = compute_inter_func_edges(graph, node_to_func)
+    data_edges =
+      Reach.edges(graph)
+      |> Enum.filter(&(is_integer(&1.v1) and is_integer(&1.v2) and data_edge?(&1.label)))
 
-    # Also include call edges as data flow (params flow into callees)
-    call_graph = extract_call_graph(graph)
-    module_name = detect_module(all_nodes)
+    involved_ids =
+      data_edges
+      |> Enum.flat_map(&[&1.v1, &1.v2])
 
-    _call_flow_edges =
-      Graph.edges(call_graph)
-      |> Enum.reject(&garbage_call?/1)
-      |> Enum.map(fn e ->
-        src = resolve_nil_module(e.v1, module_name)
-        tgt = resolve_nil_module(e.v2, module_name)
-        {src, tgt}
-      end)
-      |> Enum.reject(fn {src, tgt} -> src == tgt end)
-      |> Enum.uniq()
+    functions = build_data_flow_nodes(all_nodes, involved_ids, node_to_func, node_map)
 
-    # Build function nodes that participate in data flow
-    involved_func_ids =
-      inter_func_edges
-      |> Enum.flat_map(fn {src, tgt, _} -> [src, tgt] end)
-      |> MapSet.new()
-
-    functions =
-      func_nodes
-      |> Enum.filter(&(&1.id in involved_func_ids))
-      |> Enum.map(fn f ->
-        source = extract_func_source(f)
-
-        %{
-          id: to_string(f.id),
-          label: "#{f.meta[:name]}/#{f.meta[:arity]}",
-          module: f.meta[:module] && inspect(f.meta[:module]),
-          start_line: get_in(f, [Access.key(:source_span), Access.key(:start_line)]) || 1,
-          source_html: highlight_source(source)
-        }
-      end)
+    viz_ids = MapSet.new(functions, & &1.id)
 
     edges =
-      inter_func_edges
-      |> Enum.map(fn {src, tgt, var} ->
+      data_edges
+      |> Enum.map(fn e ->
         %{
-          id: "df_#{src}_#{tgt}",
-          source: to_string(src),
-          target: to_string(tgt),
-          label: to_string(var || "data"),
+          id: "df_#{e.v1}_#{e.v2}",
+          source: to_string(e.v1),
+          target: to_string(e.v2),
+          label: to_string(extract_var_name(e.label) || "data"),
           color: "#16a34a"
         }
       end)
+      |> Enum.filter(&(&1.source in viz_ids and &1.target in viz_ids))
+      |> Enum.uniq_by(&{&1.source, &1.target})
 
     taint_paths =
       Enum.map(taint_results, fn result ->
@@ -280,19 +256,6 @@ defmodule Reach.Visualize do
     %{functions: functions, edges: edges, taint_paths: taint_paths}
   end
 
-  defp compute_inter_func_edges(graph, node_to_func) do
-    graph
-    |> Reach.edges()
-    |> Enum.filter(fn e ->
-      is_integer(e.v1) and is_integer(e.v2) and data_edge?(e.label)
-    end)
-    |> Enum.map(fn e ->
-      {Map.get(node_to_func, e.v1), Map.get(node_to_func, e.v2), extract_var_name(e.label)}
-    end)
-    |> Enum.reject(fn {src, tgt, _} -> src == tgt or is_nil(src) or is_nil(tgt) end)
-    |> Enum.uniq_by(fn {src, tgt, _} -> {src, tgt} end)
-  end
-
   defp data_edge?({:data, _}), do: true
 
   defp data_edge?(:match_binding), do: true
@@ -301,6 +264,31 @@ defmodule Reach.Visualize do
 
   defp extract_var_name({:data, var}), do: var
   defp extract_var_name(_), do: nil
+
+  defp build_data_flow_nodes(all_nodes, involved_ids, node_to_func, node_map) do
+    for n <- all_nodes,
+        n.id in involved_ids,
+        n.type not in [:module_def, :function_def, :clause],
+        n.source_span[:start_line] != nil do
+      func_id = Map.get(node_to_func, n.id)
+      func = if func_id, do: Map.get(node_map, func_id)
+      prefix = if func, do: "#{func.meta[:name]}/#{func.meta[:arity]} ", else: ""
+
+      %{
+        id: to_string(n.id),
+        label: "#{prefix}L#{n.source_span[:start_line]}: #{ir_node_label(n)}",
+        module: nil,
+        start_line: n.source_span[:start_line],
+        source_html: nil
+      }
+    end
+  end
+
+  defp ir_node_label(%{type: :var, meta: %{name: name}}), do: to_string(name)
+  defp ir_node_label(%{type: :call, meta: %{name: name}}), do: to_string(name) <> "(...)"
+  defp ir_node_label(%{type: :match}), do: "="
+  defp ir_node_label(%{type: :literal, meta: %{value: v}}), do: inspect(v)
+  defp ir_node_label(%{type: type}), do: to_string(type)
 
   # ── Helpers ──
 
