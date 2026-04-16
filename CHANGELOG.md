@@ -12,7 +12,7 @@
 - **Expression-level control flow graph** — source-primary visualization where
   every line of every function is visible. Branch points (if/case/unless) show
   fan-out edges, all paths converge at merge points with blue converge edges.
-- **Core CFG expansion** — `Reach.ControlFlow.build/1` now correctly expands
+- **Core CFG expansion** — Reach.ControlFlow.build/1 now correctly expands
   branches nested inside pipes, assignments, and calls. `if ... end |> f()`
   shows both branches converging at the pipe call.
 - **Intra-function data flow** — Data Flow tab shows variable def→use chains

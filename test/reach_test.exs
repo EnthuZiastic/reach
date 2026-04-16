@@ -35,7 +35,7 @@ defmodule ReachTest do
     end
 
     test "raises on parse error" do
-      assert_raise RuntimeError, ~r/parse error/i, fn ->
+      assert_raise ArgumentError, ~r/parse error/i, fn ->
         Reach.string_to_graph!("def foo(")
       end
     end

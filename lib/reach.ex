@@ -43,11 +43,12 @@ defmodule Reach do
       Reach.pure?(node)  #=> true
   """
 
-  alias Reach.{Effects, Frontend, Project, SystemDependence}
+  alias Reach.{Effects, Frontend, SystemDependence}
   alias Reach.IR.{Counter, Node}
+  import Reach.IR.Helpers, only: [module_from_path: 1]
 
   @typedoc "A program dependence graph. Built by `string_to_graph/2`, `file_to_graph/2`, etc."
-  @type graph :: SystemDependence.t() | Project.t()
+  @type graph :: struct()
 
   @type node_id :: Node.id()
 
@@ -81,7 +82,7 @@ defmodule Reach do
   def string_to_graph!(source, opts \\ []) do
     case string_to_graph(source, opts) do
       {:ok, graph} -> graph
-      {:error, reason} -> raise "Reach parse error: #{inspect(reason)}"
+      {:error, reason} -> raise ArgumentError, "Reach parse error: #{inspect(reason)}"
     end
   end
 
@@ -131,7 +132,7 @@ defmodule Reach do
   def file_to_graph!(path, opts \\ []) do
     case file_to_graph(path, opts) do
       {:ok, graph} -> graph
-      {:error, reason} -> raise "Reach error: #{inspect(reason)}"
+      {:error, reason} -> raise ArgumentError, "Reach error: #{inspect(reason)}"
     end
   end
 
@@ -838,18 +839,5 @@ defmodule Reach do
       ext when ext in [".erl", ".hrl"] -> :erlang
       _ -> :elixir
     end
-  end
-
-  defp module_from_path(path) do
-    path
-    |> Path.rootname()
-    |> Path.split()
-    |> Enum.drop_while(&(&1 != "lib"))
-    |> Enum.drop(1)
-    |> Enum.map_join(".", &Macro.camelize/1)
-    |> then(fn
-      "" -> nil
-      name -> Module.concat([name])
-    end)
   end
 end

@@ -22,7 +22,9 @@ defmodule Reach.Project do
 
   alias Reach.{Frontend, IR}
   alias Reach.IR.Counter
-  import Reach.IR.Helpers, only: [param_var_name: 1, var_used_in_subtree?: 2]
+
+  import Reach.IR.Helpers,
+    only: [param_var_name: 1, var_used_in_subtree?: 2, language_from_path: 1, module_from_path: 1]
 
   @type t :: %__MODULE__{
           modules: %{module() => map()},
@@ -345,30 +347,10 @@ defmodule Reach.Project do
     end)
   end
 
-  defp language_from_path(path) do
-    case Path.extname(path) do
-      ext when ext in [".erl", ".hrl"] -> :erlang
-      _ -> :elixir
-    end
-  end
-
   defp extract_module_name(ir_nodes) do
     Enum.find_value(ir_nodes, fn
       %{type: :module_def, meta: %{name: name}} -> name
       _ -> nil
-    end)
-  end
-
-  defp module_from_path(path) do
-    path
-    |> Path.rootname()
-    |> Path.split()
-    |> Enum.drop_while(&(&1 != "lib" and &1 != "src"))
-    |> Enum.drop(1)
-    |> Enum.map_join(".", &Macro.camelize/1)
-    |> then(fn
-      "" -> nil
-      name -> Module.concat([name])
     end)
   end
 end

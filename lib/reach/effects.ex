@@ -311,10 +311,9 @@ defmodule Reach.Effects do
     do: Enum.all?(subtypes, &pure_return_type?/1)
 
   defp pure_return_type?({:type, _, :range, _}), do: true
-  defp pure_return_type?({:remote_type, _, _}), do: true
+  defp pure_return_type?({tag, _, _}) when tag in [:remote_type, :var, :atom], do: true
   defp pure_return_type?({:user_type, _, _, _}), do: true
-  defp pure_return_type?({:var, _, _}), do: true
-  defp pure_return_type?({:atom, _, _}), do: true
+
   defp pure_return_type?(_), do: false
 
   @effectful_in_pure_modules [{Enum, :each, 2}, {Enum, :each, 1}]
