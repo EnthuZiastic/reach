@@ -167,8 +167,6 @@ defmodule Reach.Visualize.ControlFlow do
     {[dispatch | clause_nodes], edges}
   end
 
-  # ── Expression-level nodes from AST ──
-
   # ── CFG-based expression nodes ──
 
   defp build_expression_nodes(func, file, func_start) do
@@ -188,7 +186,6 @@ defmodule Reach.Visualize.ControlFlow do
     node_map = Map.new(all_ir, &{&1.id, &1})
     func_id = to_string(func.id)
 
-    # Get CFG vertices with valid source lines (skip nil/def-line nodes)
     ir_vertices =
       cfg
       |> Graph.vertices()
@@ -202,23 +199,17 @@ defmodule Reach.Visualize.ControlFlow do
       source = Visualize.extract_func_source(func)
       fallback_single_block(func, source, func_start)
     else
-      # Assign line ranges: each vertex extends to the next vertex's start - 1
       vertex_ranges = compute_vertex_ranges(ir_vertices, node_map, func_start, func_end)
-
-      # Detect which vertices are branch points
       branch_vertices = detect_branches(cfg)
 
-      # Build visualization blocks by merging consecutive sequential vertices
       blocks = build_viz_blocks(ir_vertices, cfg, vertex_ranges, branch_vertices)
+      blocks = merge_same_line_blocks(blocks, vertex_ranges, branch_vertices)
 
-      # Convert blocks to visualization nodes
       viz_nodes = blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file)
 
-      # Build edges from CFG
       block_for_vertex = build_block_map(blocks)
       viz_edges = build_viz_edges(cfg, block_for_vertex, branch_vertices, node_map)
 
-      # Add entry and exit
       entry =
         make_node(
           func_id,
@@ -239,11 +230,9 @@ defmodule Reach.Visualize.ControlFlow do
           highlight_line(file, func_end)
         )
 
-      # Connect entry to first block
       first_block_id = find_entry_target(cfg, block_for_vertex)
       entry_edge = if first_block_id, do: seq_edge(func_id, first_block_id)
 
-      # Connect last blocks to exit
       exit_targets = find_exit_predecessors(cfg, block_for_vertex)
 
       exit_edges =
@@ -334,6 +323,36 @@ defmodule Reach.Visualize.ControlFlow do
     Graph.edges(cfg, from, to) |> Enum.any?(&(&1.label == :sequential))
   end
 
+  defp merge_same_line_blocks(blocks, vertex_ranges, branch_vertices) do
+    blocks
+    |> Enum.group_by(fn block ->
+      first_v = hd(block)
+      {start_l, _} = Map.fetch!(vertex_ranges, first_v)
+      start_l
+    end)
+    |> Enum.flat_map(fn {_line, group} ->
+      merge_block_group(group, branch_vertices)
+    end)
+  end
+
+  defp merge_block_group([_single] = group, _branch_vertices), do: group
+
+  defp merge_block_group(group, branch_vertices) do
+    {priority, seq} =
+      Enum.split_with(group, fn block ->
+        Enum.any?(block, &(&1 in branch_vertices))
+      end)
+
+    case priority do
+      [] ->
+        [List.flatten(group)]
+
+      winners ->
+        absorbed = List.flatten(seq)
+        Enum.map(winners, fn block -> block ++ absorbed end)
+    end
+  end
+
   defp blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file) do
     Enum.map(blocks, &block_to_viz_node(&1, vertex_ranges, branch_vertices, node_map, file))
   end
@@ -343,8 +362,8 @@ defmodule Reach.Visualize.ControlFlow do
     {start_l, _} = Map.fetch!(vertex_ranges, first_v)
     {_, end_l} = Map.fetch!(vertex_ranges, List.last(block))
     node = Map.get(node_map, first_v)
-    type = block_type(first_v, node, branch_vertices)
-    label = block_label(type, node)
+    type = block_type(block, branch_vertices, node_map)
+    label = block_label(type, node, block, node_map)
     block_id = "b_" <> Enum.map_join(block, "_", &to_string/1)
 
     source =
@@ -356,22 +375,50 @@ defmodule Reach.Visualize.ControlFlow do
     make_node(block_id, type, label, start_l, end_l, source)
   end
 
-  defp block_type(vertex, node, branch_vertices) do
+  defp block_type(block, branch_vertices, node_map) do
     cond do
-      vertex in branch_vertices -> :branch
-      node && node.meta[:kind] in [:case_clause, :true_branch, :false_branch] -> :clause
-      true -> :sequential
+      Enum.any?(block, &(&1 in branch_vertices)) ->
+        :branch
+
+      Enum.any?(block, fn v ->
+        n = Map.get(node_map, v)
+        n && n.meta[:kind] in [:case_clause, :true_branch, :false_branch]
+      end) ->
+        :clause
+
+      true ->
+        :sequential
     end
   end
 
-  defp block_label(:branch, node), do: branch_label(node)
-  defp block_label(:clause, node), do: clause_label(node)
-  defp block_label(_, _), do: nil
+  defp block_label(:branch, node, block, node_map) do
+    case find_case_node(block, node_map) do
+      nil -> branch_label(node)
+      case_node -> branch_label(case_node)
+    end
+  end
 
-  defp branch_label(%{type: :case, meta: %{kind: kind}})
-       when kind in [:true_branch, :false_branch],
-       do: "if"
+  defp block_label(:clause, node, block, node_map) do
+    clause_node =
+      Enum.find_value(block, fn v ->
+        n = Map.get(node_map, v)
+        if n && n.meta[:kind] in [:case_clause, :true_branch, :false_branch], do: n
+      end)
 
+    clause_label(clause_node || node)
+  end
+
+  defp block_label(_, _, _block, _node_map), do: nil
+
+  defp find_case_node(block, node_map) do
+    Enum.find_value(block, fn v ->
+      n = Map.get(node_map, v)
+      if n && n.type == :case, do: n
+    end)
+  end
+
+  defp branch_label(%{type: :case, meta: %{desugared_from: :if}}), do: "if"
+  defp branch_label(%{type: :case, meta: %{desugared_from: :unless}}), do: "unless"
   defp branch_label(%{type: :case}), do: "case"
   defp branch_label(_), do: "branch"
 
@@ -380,15 +427,61 @@ defmodule Reach.Visualize.ControlFlow do
 
   defp clause_label(%{meta: %{kind: :case_clause}} = node) do
     node.children
-    |> Enum.take(1)
-    |> Enum.map_join(", ", &ir_label/1)
+    |> Enum.take_while(fn c ->
+      c.meta[:binding_role] == :definition or
+        c.type in [:literal, :tuple, :map, :list, :struct, :var]
+    end)
+    |> Enum.map_join(", ", &render_pattern/1)
     |> case do
       "" -> "_"
-      s -> String.slice(s, 0, 40)
+      s -> String.slice(s, 0, 50)
     end
   end
 
   defp clause_label(_), do: nil
+
+  defp render_pattern(%{type: :literal, meta: %{value: val}}), do: inspect(val)
+  defp render_pattern(%{type: :var, meta: %{name: name}}), do: to_string(name)
+
+  defp render_pattern(%{type: :tuple, children: children}) do
+    inner = Enum.map_join(children, ", ", &render_pattern/1)
+    "{#{inner}}"
+  end
+
+  defp render_pattern(%{type: :map, children: children}) do
+    pairs =
+      children
+      |> Enum.chunk_every(2)
+      |> Enum.map_join(", ", &render_map_pair/1)
+
+    "%{#{pairs}}"
+  end
+
+  defp render_pattern(%{type: :list, children: children}) do
+    inner = Enum.map_join(children, ", ", &render_pattern/1)
+    "[#{inner}]"
+  end
+
+  defp render_pattern(%{type: :struct, children: children, meta: meta}) do
+    name = if meta[:name], do: inspect(meta[:name]), else: ""
+
+    fields =
+      children
+      |> Enum.chunk_every(2)
+      |> Enum.map_join(", ", &render_map_pair/1)
+
+    "%#{name}{#{fields}}"
+  end
+
+  defp render_pattern(%{type: type}), do: to_string(type)
+
+  defp render_map_pair([%{type: :literal, meta: %{value: key}}, val]) do
+    "#{key}: #{render_pattern(val)}"
+  end
+
+  defp render_map_pair([key, _val]) do
+    "#{render_pattern(key)}: ..."
+  end
 
   defp build_block_map(blocks) do
     for block <- blocks, v <- block, into: %{} do
@@ -492,8 +585,6 @@ defmodule Reach.Visualize.ControlFlow do
     |> Enum.uniq()
   end
 
-  # ── Leaf collection ──
-
   # ── Fallback ──
 
   defp fallback_single_block(func, source, start_line) do
@@ -560,8 +651,6 @@ defmodule Reach.Visualize.ControlFlow do
   defp clause_color(2), do: "#ea580c"
   defp clause_color(_), do: "#7c3aed"
 
-  # ── AST helpers ──
-
   # ── Source helpers ──
 
   defp highlight_line(file, line) when is_binary(file) and is_integer(line) do
@@ -574,17 +663,16 @@ defmodule Reach.Visualize.ControlFlow do
   defp highlight_line(_, _), do: nil
 
   defp highlight_lines(file, from, to) when is_binary(file) do
-    case File.read(file) do
-      {:ok, content} ->
-        content
-        |> String.split("\n")
+    case cached_file_lines(file) do
+      nil ->
+        nil
+
+      lines ->
+        lines
         |> Enum.slice((from - 1)..max(from - 1, to - 1))
         |> dedent()
         |> Enum.join("\n")
         |> Visualize.highlight_source()
-
-      _ ->
-        nil
     end
   end
 
@@ -601,9 +689,29 @@ defmodule Reach.Visualize.ControlFlow do
   end
 
   defp read_line(file, line) do
-    case File.read(file) do
-      {:ok, content} -> content |> String.split("\n") |> Enum.at(line - 1)
-      _ -> nil
+    case cached_file_lines(file) do
+      nil -> nil
+      lines -> Enum.at(lines, line - 1)
+    end
+  end
+
+  defp cached_file_lines(file) do
+    cache_key = {:reach_file_lines, file}
+
+    case Process.get(cache_key) do
+      nil ->
+        case File.read(file) do
+          {:ok, content} ->
+            lines = String.split(content, "\n")
+            Process.put(cache_key, lines)
+            lines
+
+          _ ->
+            nil
+        end
+
+      lines ->
+        lines
     end
   end
 
@@ -633,17 +741,16 @@ defmodule Reach.Visualize.ControlFlow do
 
     with true <- is_binary(file) and is_integer(clause_start),
          end_line <- clause_end_line(func, clause_start, all_clauses, file) do
-      case File.read(file) do
-        {:ok, content} ->
-          content
-          |> String.split("\n")
+      case cached_file_lines(file) do
+        nil ->
+          nil
+
+        lines ->
+          lines
           |> Enum.slice((clause_start - 1)..(end_line - 1))
           |> dedent()
           |> Enum.join("\n")
           |> Visualize.format_source()
-
-        _ ->
-          nil
       end
     else
       _ -> nil

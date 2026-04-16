@@ -285,7 +285,7 @@ defmodule Reach.Visualize do
   end
 
   defp ir_node_label(%{type: :var, meta: %{name: name}}), do: to_string(name)
-  defp ir_node_label(%{type: :call, meta: %{name: name}}), do: to_string(name) <> "(...)"
+  defp ir_node_label(%{type: :call, meta: meta}), do: to_string(meta[:function]) <> "(...)"
   defp ir_node_label(%{type: :match}), do: "="
   defp ir_node_label(%{type: :literal, meta: %{value: v}}), do: inspect(v)
   defp ir_node_label(%{type: type}), do: to_string(type)
