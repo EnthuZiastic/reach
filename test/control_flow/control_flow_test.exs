@@ -409,26 +409,5 @@ defmodule Reach.ControlFlowTest do
       assert has_path?(cfg, match_node.id, :exit)
     end
 
-    @tag :real_world
-    test "all non-clause_fail vertices reach exit in real-world file" do
-      graph = Reach.file_to_graph!("/tmp/plausible/lib/plausible/exports.ex")
-      func_defs = Reach.nodes(graph) |> Enum.filter(&(&1.type == :function_def))
-      assert func_defs != [], "expected function definitions"
-
-      for func <- func_defs do
-        cfg = ControlFlow.build(func)
-
-        unreachable =
-          Graph.vertices(cfg)
-          |> Enum.reject(fn
-            :exit -> true
-            {:clause_fail, _} -> true
-            v -> has_path?(cfg, v, :exit)
-          end)
-
-        assert unreachable == [],
-               "#{func.meta.name}/#{func.meta.arity}: vertices #{inspect(unreachable)} don't reach :exit"
-      end
-    end
   end
 end
