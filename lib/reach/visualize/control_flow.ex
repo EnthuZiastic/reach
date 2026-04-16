@@ -269,13 +269,31 @@ defmodule Reach.Visualize.ControlFlow do
   end
 
   defp detect_branches(cfg) do
-    cfg
-    |> Graph.edges()
-    |> Enum.filter(fn e ->
-      match?({:clause_match, _}, e.label) or e.label in [:true_branch, :false_branch]
-    end)
-    |> Enum.map(& &1.v1)
-    |> MapSet.new()
+    # Vertices that emit clause_match or true/false branch edges
+    edge_branches =
+      cfg
+      |> Graph.edges()
+      |> Enum.filter(fn e ->
+        match?({:clause_match, _}, e.label) or e.label in [:true_branch, :false_branch]
+      end)
+      |> Enum.map(& &1.v1)
+
+    # Clause targets are also block boundaries (each clause starts its own block)
+    clause_targets =
+      cfg
+      |> Graph.edges()
+      |> Enum.filter(fn e -> match?({:clause_match, _}, e.label) end)
+      |> Enum.map(& &1.v2)
+
+    # Any vertex with multiple outgoing edges is a branch point
+    multi_out =
+      cfg
+      |> Graph.edges()
+      |> Enum.group_by(& &1.v1)
+      |> Enum.filter(fn {_, edges} -> length(edges) > 1 end)
+      |> Enum.map(fn {v, _} -> v end)
+
+    MapSet.new(edge_branches ++ clause_targets ++ multi_out)
   end
 
   defp build_viz_blocks(ir_vertices, cfg, _vertex_ranges, branch_vertices) do
@@ -345,13 +363,23 @@ defmodule Reach.Visualize.ControlFlow do
         Enum.any?(block, &(&1 in branch_vertices))
       end)
 
-    case priority do
-      [] ->
+    case {priority, seq} do
+      {[], _} ->
         [List.flatten(group)]
 
-      winners ->
-        absorbed = List.flatten(seq)
-        Enum.map(winners, fn block -> block ++ absorbed end)
+      {_winners, []} ->
+        priority
+
+      {winners, _seq} ->
+        # When multiple branch blocks share the same line (nested constructs),
+        # don't merge sequential blocks into them — they belong to different
+        # control flow paths.
+        if length(priority) > 1 do
+          priority ++ seq
+        else
+          absorbed = List.flatten(seq)
+          Enum.map(winners, fn block -> block ++ absorbed end)
+        end
     end
   end
 
