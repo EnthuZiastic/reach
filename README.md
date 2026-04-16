@@ -12,10 +12,15 @@ Elixir 1.18+ / OTP 27+.
 
 ## Quick start
 
+Add Reach to your dependencies:
+
 ```elixir
-# mix.exs
-{:reach, "~> 1.1"}
+def deps do
+  [{:reach, "~> 1.1"}]
+end
 ```
+
+Build a graph from any Elixir code and ask questions about it:
 
 ```elixir
 graph = Reach.string_to_graph!("""
@@ -24,29 +29,30 @@ def run(input) do
   System.cmd("sh", ["-c", command])
 end
 """)
-
-# What affects the System.cmd call?
-[cmd_call] = Reach.nodes(graph, type: :call, module: System, function: :cmd)
-Reach.backward_slice(graph, cmd_call.id)
-#=> traces back through command, String.trim, to the input parameter
 ```
 
+Find what affects a specific call — trace the `System.cmd` back to its origins:
+
 ```elixir
-# Taint analysis: does user input reach a dangerous sink?
+[cmd_call] = Reach.nodes(graph, type: :call, module: System, function: :cmd)
+Reach.backward_slice(graph, cmd_call.id)
+```
+
+Check whether user input reaches a dangerous sink without sanitization:
+
+```elixir
 Reach.taint_analysis(graph,
   sources: [type: :call, function: :params],
   sinks: [type: :call, module: System, function: :cmd],
   sanitizers: [type: :call, function: :sanitize]
 )
-#=> [%{source: ..., sink: ..., path: [...], sanitized: false}]
 ```
+
+Or check whether two statements can be safely reordered:
 
 ```elixir
-# Can these two statements be reordered?
 Reach.independent?(graph, node_a.id, node_b.id)
-#=> true
 ```
-
 ## Interactive visualization
 
 ```bash
