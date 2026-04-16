@@ -172,9 +172,8 @@ defmodule Reach do
   end
 
   def compiled_to_graph(compiled, opts) when is_list(compiled) do
-    case Frontend.BEAM.from_compiled_modules(compiled, opts) do
-      {:ok, nodes} -> {:ok, SystemDependence.build(nodes, opts)}
-    end
+    {:ok, nodes} = Frontend.BEAM.from_compiled_modules(compiled, opts)
+    {:ok, SystemDependence.build(nodes, opts)}
   end
 
   def compiled_to_graph(_, _opts), do: {:error, :invalid_input}
