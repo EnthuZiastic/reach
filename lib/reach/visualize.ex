@@ -158,7 +158,7 @@ defmodule Reach.Visualize do
 
     cond do
       # Ecto query field access: :e.name/0, :s.timestamp/0
-      is_atom(tgt_mod) and tgt_ar == 0 and ecto_binding?(tgt_mod) ->
+      is_atom(tgt_mod) and tgt_ar == 0 and field_access?(tgt_mod) ->
         true
 
       # Pipe operator
@@ -184,6 +184,16 @@ defmodule Reach.Visualize do
 
   @ecto_dsl_macros ~w(from assoc is_nil field type selected_as coalesce fragment subquery dynamic select_merge)a
   defp ecto_dsl_macro?(fn_name, arity), do: fn_name in @ecto_dsl_macros and arity <= 3
+
+  defp field_access?(mod), do: ecto_binding?(mod) or variable_access?(mod)
+  defp variable_access?(nil), do: false
+
+  defp variable_access?(mod) when is_atom(mod) do
+    name = Atom.to_string(mod)
+
+    String.first(name) == String.downcase(String.first(name)) and
+      not String.starts_with?(name, "Elixir.")
+  end
 
   defp ecto_binding?(mod) when is_atom(mod) do
     s = Atom.to_string(mod)

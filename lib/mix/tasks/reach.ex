@@ -31,32 +31,14 @@ defmodule Mix.Tasks.Reach do
 
   @template_path Path.expand("../../../priv/template.html.eex", __DIR__)
   @js_bundle_path Path.expand("../../../priv/static/js/reach.js", __DIR__)
-  @elk_bundle_path Path.expand("../../../assets/node_modules/elkjs/lib/elk.bundled.js", __DIR__)
-  @vue_flow_css_path Path.expand(
-                       "../../../assets/node_modules/@vue-flow/core/dist/style.css",
-                       __DIR__
-                     )
-  @vue_flow_theme_path Path.expand(
-                         "../../../assets/node_modules/@vue-flow/core/dist/theme-default.css",
-                         __DIR__
-                       )
-  @minimap_css_path Path.expand(
-                      "../../../assets/node_modules/@vue-flow/minimap/dist/style.css",
-                      __DIR__
-                    )
-  @controls_css_path Path.expand(
-                       "../../../assets/node_modules/@vue-flow/controls/dist/style.css",
-                       __DIR__
-                     )
+  @elk_bundle_path Path.expand("../../../priv/static/js/elk.bundled.js", __DIR__)
+  @vue_flow_css_path Path.expand("../../../priv/static/css/vue-flow.css", __DIR__)
 
   for path <- [
         @template_path,
         @js_bundle_path,
         @elk_bundle_path,
-        @vue_flow_css_path,
-        @vue_flow_theme_path,
-        @minimap_css_path,
-        @controls_css_path
+        @vue_flow_css_path
       ] do
     @external_resource path
   end
@@ -64,18 +46,7 @@ defmodule Mix.Tasks.Reach do
   @template File.read!(@template_path)
   @js_bundle if File.exists?(@js_bundle_path), do: File.read!(@js_bundle_path), else: ""
   @elk_bundle if File.exists?(@elk_bundle_path), do: File.read!(@elk_bundle_path), else: ""
-  @vue_flow_css Enum.map_join(
-                  [
-                    @vue_flow_css_path,
-                    @vue_flow_theme_path,
-                    @minimap_css_path,
-                    @controls_css_path
-                  ],
-                  "\n",
-                  fn path ->
-                    if File.exists?(path), do: File.read!(path), else: ""
-                  end
-                )
+  @vue_flow_css if File.exists?(@vue_flow_css_path), do: File.read!(@vue_flow_css_path), else: ""
 
   @impl Mix.Task
   def run(args) do

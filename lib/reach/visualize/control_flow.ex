@@ -773,8 +773,8 @@ defmodule Reach.Visualize.ControlFlow do
     start = span_field(func, :start_line)
 
     case Map.get(cache, file) do
-      nil -> (start || 1) + 10
-      map -> Map.get(map, start, (start || 1) + 10)
+      nil -> (start || 1) + 100
+      map -> Map.get(map, start, (start || 1) + 100)
     end
   end
 

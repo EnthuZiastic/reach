@@ -182,14 +182,16 @@ defmodule Reach.Frontend.Elixir do
       id: Counter.next(counter),
       type: :clause,
       meta: %{kind: :true_branch},
-      children: [true_node]
+      children: [true_node],
+      source_span: first_child_span(true_node)
     }
 
     false_clause = %Node{
       id: Counter.next(counter),
       type: :clause,
       meta: %{kind: :false_branch},
-      children: [false_node]
+      children: [false_node],
+      source_span: first_child_span(false_node)
     }
 
     %Node{
@@ -918,6 +920,14 @@ defmodule Reach.Frontend.Elixir do
 
   defp module_name(atom) when is_atom(atom), do: atom
   defp module_name(other), do: other
+
+  defp first_child_span(nil), do: nil
+
+  defp first_child_span(%Node{source_span: span}) when span != nil, do: span
+
+  defp first_child_span(%Node{children: children}) do
+    Enum.find_value(children, &first_child_span/1)
+  end
 
   defp span_from_meta(meta, file) when is_list(meta) do
     case meta[:line] do
