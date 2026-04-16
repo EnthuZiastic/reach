@@ -33,8 +33,8 @@ defmodule Reach.VisualizeTest do
       assert [func | _] = mod.functions
       assert func.name == "f"
       assert func.arity == 1
-      assert is_list(func.blocks.blocks)
-      assert is_list(func.blocks.edges)
+      assert is_list(func.nodes)
+      assert is_list(func.edges)
     end
 
     test "call graph has modules and edges" do
