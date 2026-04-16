@@ -428,7 +428,7 @@ defmodule Reach.Visualize.ControlFlow do
       end
 
     label = to_string(form)
-    branch_node = make_node(id, :branch, label, if_line, if_end, highlight_line(file, if_line))
+    branch_node = make_node(id, :branch, label, if_line, if_line, highlight_line(file, if_line))
 
     do_body = blocks[:do]
     else_body = blocks[:else]
@@ -460,7 +460,10 @@ defmodule Reach.Visualize.ControlFlow do
     case_end = (get_in(meta, [:end, :line]) || meta[:line] || 1) + offset
 
     branch_node =
-      make_node(id, :branch, "case", case_line, case_end, highlight_line(file, case_line))
+      make_node(id, :branch, "case", case_line, case_line, highlight_line(file, case_line))
+
+    clause_starts =
+      Enum.map(clauses, fn {:->, cm, _} -> (cm[:line] || 1) + offset end)
 
     {clause_nodes, clause_edges, clause_leaves} =
       clauses
@@ -487,7 +490,7 @@ defmodule Reach.Visualize.ControlFlow do
           if same_line? do
             {[], [], []}
           else
-            build_arm(body, clause_id, id, file, offset, case_end)
+            clause_arm_end(clause_starts, idx, case_end, body, clause_id, id, file, offset)
           end
 
         edge = branch_edge(id, clause_id, pattern_str, clause_color(idx))
@@ -500,6 +503,12 @@ defmodule Reach.Visualize.ControlFlow do
       end)
 
     {[branch_node | clause_nodes], clause_edges, clause_leaves}
+  end
+
+  defp clause_arm_end(clause_starts, idx, case_end, body, clause_id, branch_id, file, offset) do
+    next_clause = Enum.at(clause_starts, idx + 1)
+    arm_end = if next_clause, do: next_clause - 1, else: case_end
+    build_arm(body, clause_id, branch_id, file, offset, arm_end)
   end
 
   defp clause_body_inline?(body, clause_line, offset) do

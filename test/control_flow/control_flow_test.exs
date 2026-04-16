@@ -274,4 +274,161 @@ defmodule Reach.ControlFlowTest do
       assert has_path?(control_flow, :entry, :exit)
     end
   end
+
+  describe "branches nested inside expressions" do
+    test "piped if/else — both branches converge at pipe call" do
+      {func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          if x do :a else :b end |> IO.inspect()
+        end
+        """)
+
+      all_nodes = IR.all_nodes(func)
+      call_node = Enum.find(all_nodes, &(&1.type == :call and &1.meta[:function] == :inspect))
+      assert call_node, "expected IO.inspect call node"
+
+      true_literal = Enum.find(all_nodes, &(&1.type == :literal and &1.meta[:value] == :a))
+      false_literal = Enum.find(all_nodes, &(&1.type == :literal and &1.meta[:value] == :b))
+
+      in_edges = Graph.in_edges(cfg, call_node.id)
+      in_sources = MapSet.new(in_edges, & &1.v1)
+      assert true_literal.id in in_sources, "true branch should feed into pipe call"
+      assert false_literal.id in in_sources, "false branch should feed into pipe call"
+
+      assert has_path?(cfg, true_literal.id, :exit)
+      assert has_path?(cfg, false_literal.id, :exit)
+    end
+
+    test "assigned case — match node comes after both branches converge" do
+      {func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          result = case x do
+            :a -> 1
+            :b -> 2
+          end
+        end
+        """)
+
+      all_nodes = IR.all_nodes(func)
+      match_node = Enum.find(all_nodes, &(&1.type == :match))
+      assert match_node, "expected match node"
+
+      branch_1 = Enum.find(all_nodes, &(&1.type == :literal and &1.meta[:value] == 1))
+      branch_2 = Enum.find(all_nodes, &(&1.type == :literal and &1.meta[:value] == 2))
+
+      in_edges = Graph.in_edges(cfg, match_node.id)
+      in_sources = MapSet.new(in_edges, & &1.v1)
+      assert branch_1.id in in_sources, "first case branch should feed into match"
+      assert branch_2.id in in_sources, "second case branch should feed into match"
+
+      assert has_path?(cfg, match_node.id, :exit)
+    end
+
+    test "nested if inside case — all inner if branches reach exit" do
+      {func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          case x do
+            :a ->
+              if x do
+                1
+              else
+                2
+              end
+            :b -> 3
+          end
+        end
+        """)
+
+      all_nodes = IR.all_nodes(func)
+
+      for val <- [1, 2, 3] do
+        node = Enum.find(all_nodes, &(&1.type == :literal and &1.meta[:value] == val))
+        assert node, "expected literal #{val}"
+        assert has_path?(cfg, node.id, :exit), "literal #{val} doesn't reach :exit"
+      end
+
+      assert has_path?(cfg, :entry, :exit)
+    end
+
+    test "if piped into case — if condition feeds into case clauses" do
+      {func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          if x do :a else :b end |> case do :a -> 1; :b -> 2 end
+        end
+        """)
+
+      all_nodes = IR.all_nodes(func)
+
+      if_node = Enum.find(all_nodes, &(&1.type == :case and &1.meta[:desugared_from] == :if))
+      assert if_node, "expected if (desugared to case) node"
+
+      case_clauses =
+        Enum.filter(all_nodes, &(&1.type == :clause and &1.meta[:kind] == :case_clause))
+
+      assert length(case_clauses) == 2
+
+      for clause <- case_clauses do
+        assert has_path?(cfg, if_node.id, clause.id),
+               "if node should reach case clause #{clause.id}"
+
+        assert has_path?(cfg, clause.id, :exit),
+               "case clause #{clause.id} doesn't reach :exit"
+      end
+    end
+
+    test "deep nesting — branches inside pipe chain with assignment" do
+      {func, cfg} =
+        build_control_flow("""
+        def foo(x) do
+          result = if x do :a else :b end |> IO.inspect() |> String.upcase()
+        end
+        """)
+
+      all_nodes = IR.all_nodes(func)
+
+      inspect_call =
+        Enum.find(all_nodes, &(&1.type == :call and &1.meta[:function] == :inspect))
+
+      upcase_call =
+        Enum.find(all_nodes, &(&1.type == :call and &1.meta[:function] == :upcase))
+
+      match_node = Enum.find(all_nodes, &(&1.type == :match))
+      true_literal = Enum.find(all_nodes, &(&1.type == :literal and &1.meta[:value] == :a))
+      false_literal = Enum.find(all_nodes, &(&1.type == :literal and &1.meta[:value] == :b))
+
+      in_sources = MapSet.new(Graph.in_edges(cfg, inspect_call.id), & &1.v1)
+      assert true_literal.id in in_sources, "true branch should converge at IO.inspect"
+      assert false_literal.id in in_sources, "false branch should converge at IO.inspect"
+
+      assert has_path?(cfg, inspect_call.id, upcase_call.id)
+      assert has_path?(cfg, upcase_call.id, match_node.id)
+      assert has_path?(cfg, match_node.id, :exit)
+    end
+
+    @tag :real_world
+    test "all non-clause_fail vertices reach exit in real-world file" do
+      graph = Reach.file_to_graph!("/tmp/plausible/lib/plausible/exports.ex")
+      func_defs = Reach.nodes(graph) |> Enum.filter(&(&1.type == :function_def))
+      assert func_defs != [], "expected function definitions"
+
+      for func <- func_defs do
+        cfg = ControlFlow.build(func)
+
+        unreachable =
+          Graph.vertices(cfg)
+          |> Enum.reject(fn
+            :exit -> true
+            {:clause_fail, _} -> true
+            v -> has_path?(cfg, v, :exit)
+          end)
+
+        assert unreachable == [],
+               "#{func.meta.name}/#{func.meta.arity}: vertices #{inspect(unreachable)} don't reach :exit"
+      end
+    end
+  end
 end
