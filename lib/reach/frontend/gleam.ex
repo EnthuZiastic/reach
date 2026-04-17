@@ -45,7 +45,7 @@ defmodule Reach.Frontend.Gleam do
   # ── Native glance parser ──
 
   defp parse_with_glance(source, file, opts) do
-    case :glance.module(source) do
+    case apply(:glance, :module, [source]) do
       {:ok, {:module, _imports, _types, _aliases, _consts, functions}} ->
         line_offsets = build_line_offsets(source)
         counter = Keyword.get(opts, :counter, Counter.new())

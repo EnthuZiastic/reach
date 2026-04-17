@@ -367,7 +367,7 @@ defmodule Reach.Visualize do
     end
 
     if :code.which(:glance) != :non_existing do
-      :glance.module(source)
+      apply(:glance, :module, [source])
     else
       {:error, :glance_not_available}
     end
