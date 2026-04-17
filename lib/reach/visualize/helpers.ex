@@ -209,32 +209,22 @@ defmodule Reach.Visualize.Helpers do
 
   def func_end_line(func, file) do
     if file, do: Visualize.ensure_def_cache(file)
-    cache = Process.get(:reach_def_end_cache, %{})
     start = span_field(func, :start_line)
     fallback = file_line_count(file) || (start || 1) + 50
+    line_map = Process.get(:reach_def_end_cache, %{}) |> Map.get(file, %{})
 
-    case Map.get(cache, file) do
-      nil ->
-        fallback
-
-      map ->
-        case Map.get(map, start) do
-          nil ->
-            # For Gleam: function head line may differ from body start line.
-            # Find the nearest def start <= our start line.
-            nearest =
-              map
-              |> Map.keys()
-              |> Enum.filter(&(&1 <= start))
-              |> Enum.max(fn -> nil end)
-
-            if nearest, do: Map.get(map, nearest), else: fallback
-
-          end_line ->
-            end_line
-        end
-    end
+    Map.get(line_map, start) || find_nearest_end(line_map, start) || fallback
   end
+
+  defp find_nearest_end(line_map, start) when is_integer(start) do
+    line_map
+    |> Map.keys()
+    |> Enum.filter(&(&1 <= start))
+    |> Enum.max(fn -> nil end)
+    |> then(fn nearest -> if nearest, do: Map.get(line_map, nearest) end)
+  end
+
+  defp find_nearest_end(_, _), do: nil
 
   def span_field(%{source_span: %{} = span}, field), do: Map.get(span, field)
   def span_field(_, _), do: nil

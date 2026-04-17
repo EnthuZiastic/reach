@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.0
+
+### New
+
+- **Gleam support** — analyze `.gleam` source files with accurate line mapping.
+  Uses the `glance` parser (Gleam’s own parser, written in Gleam) for native AST
+  parsing with byte-offset spans. Supports case expressions, pattern matching with
+  guards, pipes, anonymous functions, record updates, and all standard Gleam
+  constructs. Requires `gleam build` and glance on the code path.
+
+### Fixed
+
+- Unreachable `block_label/5` catch-all clause removed (Dialyzer).
+- `file_to_graph/2` cyclomatic complexity reduced — extracted `parse_file_and_build/3`
+  and `read_and_build_elixir/2`.
+- `func_end_line/2` simplified — extracted `find_nearest_end/2`.
+- `apply/3` used for optional `:glance` module to avoid compile-time warnings.
+- Empty blocks from line clamping filtered out in visualization.
+- Exit nodes show label in Vue component (no more invisible gray bars).
+- Block end_line uses max across all vertices (fixes multi-line heredoc coverage).
+- Block overlap elimination — end_line clamping considers all blocks globally.
+- `repo_module?/1` crash on capture syntax `& &1.name` (closes #3).
+
 ## 1.1.3
 
 ### Fixed

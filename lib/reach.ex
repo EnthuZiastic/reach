@@ -98,38 +98,30 @@ defmodule Reach do
   @spec file_to_graph(Path.t(), keyword()) :: {:ok, graph()} | {:error, term()}
   def file_to_graph(path, opts \\ []) do
     language = Keyword.get(opts, :language) || language_from_extension(path)
-    opts = Keyword.put(opts, :language, language)
+    opts = Keyword.put_new(opts, :file, path) |> Keyword.put(:language, language)
 
     case language do
-      :gleam ->
-        opts = Keyword.put_new(opts, :file, path)
+      :gleam -> parse_file_and_build(&Frontend.Gleam.parse_file/2, path, opts)
+      :erlang -> parse_file_and_build(&Frontend.Erlang.parse_file/2, path, opts)
+      _elixir -> read_and_build_elixir(path, opts)
+    end
+  end
 
-        case Frontend.Gleam.parse_file(path, opts) do
-          {:ok, nodes} -> {:ok, SystemDependence.build(nodes, opts)}
-          {:error, _} = err -> err
-        end
+  defp parse_file_and_build(parser, path, opts) do
+    case parser.(path, opts) do
+      {:ok, nodes} -> {:ok, SystemDependence.build(nodes, opts)}
+      {:error, _} = err -> err
+    end
+  end
 
-      :erlang ->
-        opts = Keyword.put_new(opts, :file, path)
+  defp read_and_build_elixir(path, opts) do
+    case File.read(path) do
+      {:ok, source} ->
+        opts = Keyword.put_new(opts, :module, module_from_path(path))
+        parse_and_build(source, :elixir, opts)
 
-        case Frontend.Erlang.parse_file(path, opts) do
-          {:ok, nodes} -> {:ok, SystemDependence.build(nodes, opts)}
-          {:error, _} = err -> err
-        end
-
-      _elixir ->
-        case File.read(path) do
-          {:ok, source} ->
-            opts =
-              opts
-              |> Keyword.put_new(:file, path)
-              |> Keyword.put_new(:module, module_from_path(path))
-
-            parse_and_build(source, :elixir, opts)
-
-          {:error, reason} ->
-            {:error, {:file, reason}}
-        end
+      {:error, reason} ->
+        {:error, {:file, reason}}
     end
   end
 

@@ -519,8 +519,6 @@ defmodule Reach.Visualize.ControlFlow do
     end
   end
 
-  defp block_label(_, node, _block, _node_map, _cfg), do: ir_label(node)
-
   defp find_case_node(block, node_map, cfg) do
     find_in_block(block, node_map) || find_in_predecessors(block, node_map, cfg)
   end
