@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.3
+
+### Fixed
+
+- Crash in `Reach.Plugins.Ecto.repo_module?/1` on capture syntax like
+  `& &1.name` where call meta contains AST tuples instead of atoms (closes #3).
+- Block end_line now uses max across all vertices in the block, fixing missing
+  coverage for multi-line heredoc strings inside if/case branches.
+- Block overlap elimination — end_line clamping now considers all blocks
+  globally, not just the next one in traversal order (155 → 0 overlaps).
+- Multi-clause dispatch functions now connect exit nodes via
+  `find_exit_predecessors` instead of leaving them disconnected.
+
+### Audited
+
+16,047 functions across 1,213 files (Elixir, Phoenix, Ecto, Oban, Plausible,
+Livebook): 0 empty blocks, 0 nil labels, 0 overlaps, 0 duplicate lines,
+0 missing exits, 0 disconnected exits.
+
 ## 1.1.2
 
 ### Fixed
