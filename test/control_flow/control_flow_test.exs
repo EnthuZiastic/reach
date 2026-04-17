@@ -408,6 +408,5 @@ defmodule Reach.ControlFlowTest do
       assert has_path?(cfg, upcase_call.id, match_node.id)
       assert has_path?(cfg, match_node.id, :exit)
     end
-
   end
 end

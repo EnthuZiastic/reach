@@ -30,7 +30,9 @@ defmodule Reach.Visualize.BlockQualityTest do
 
   defp audit_file(file) do
     case Reach.file_to_graph(file) do
-      {:error, _} -> []
+      {:error, _} ->
+        []
+
       {:ok, graph} ->
         json = Reach.Visualize.to_json(graph)
         parsed = Jason.decode!(json)
@@ -101,6 +103,7 @@ defmodule Reach.Visualize.BlockQualityTest do
 
     # Also include the exit block's line (covers the 'end' line)
     exit_block = Enum.find(nodes, &(&1["type"] == "exit"))
+
     covered_lines =
       if exit_block && exit_block["start_line"] do
         MapSet.put(covered_lines, exit_block["start_line"])
@@ -144,12 +147,13 @@ defmodule Reach.Visualize.BlockQualityTest do
     overlaps =
       for b1 <- body_blocks, b2 <- body_blocks, b1["id"] < b2["id"] do
         if ranges_overlap?(
-          b1["start_line"],
-          b1["end_line"],
-          b2["start_line"],
-          b2["end_line"]
-        ) do
-          {b1["id"], b2["id"], "#{b1["start_line"]}-#{b1["end_line"]}", "#{b2["start_line"]}-#{b2["end_line"]}"}
+             b1["start_line"],
+             b1["end_line"],
+             b2["start_line"],
+             b2["end_line"]
+           ) do
+          {b1["id"], b2["id"], "#{b1["start_line"]}-#{b1["end_line"]}",
+           "#{b2["start_line"]}-#{b2["end_line"]}"}
         end
       end
       |> Enum.reject(&is_nil/1)
@@ -202,7 +206,10 @@ defmodule Reach.Visualize.BlockQualityTest do
 
     if has_branch and not has_clause do
       if length(exits) != 1 do
-        [{:entry_exit, name, "expected 1 exit for CFG function, got #{length(exits)}"} | violations]
+        [
+          {:entry_exit, name, "expected 1 exit for CFG function, got #{length(exits)}"}
+          | violations
+        ]
       else
         violations
       end

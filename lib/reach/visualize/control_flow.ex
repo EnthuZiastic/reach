@@ -117,7 +117,11 @@ defmodule Reach.Visualize.ControlFlow do
               |> Enum.min(fn -> nil end)
 
             if child_start && child_start > func_start do
-              Map.put(ranges, clause.id, {child_start, elem(Map.get(ranges, clause.id, {child_start, func_end}), 1)})
+              Map.put(
+                ranges,
+                clause.id,
+                {child_start, elem(Map.get(ranges, clause.id, {child_start, func_end}), 1)}
+              )
             else
               ranges
             end
@@ -128,7 +132,8 @@ defmodule Reach.Visualize.ControlFlow do
         blocks = build_viz_blocks(ir_vertices, cfg, vertex_ranges, branch_vertices)
         blocks = merge_same_line_blocks(blocks, vertex_ranges, branch_vertices)
 
-        viz_nodes = blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file, cfg)
+        viz_nodes =
+          blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file, cfg)
 
         block_for_vertex = build_block_map(blocks)
         viz_edges = build_viz_edges(cfg, block_for_vertex, branch_vertices, node_map)
@@ -139,15 +144,18 @@ defmodule Reach.Visualize.ControlFlow do
           |> Enum.with_index()
           |> Enum.flat_map(fn {clause, idx} ->
             target_block = Map.get(block_for_vertex, clause.id)
+
             if target_block do
-              [%{
-                id: "dispatch_#{func_id}_#{clause.id}",
-                source: func_id,
-                target: target_block,
-                label: clause_pattern(clause),
-                edge_type: :branch,
-                color: dispatch_color(idx)
-              }]
+              [
+                %{
+                  id: "dispatch_#{func_id}_#{clause.id}",
+                  source: func_id,
+                  target: target_block,
+                  label: clause_pattern(clause),
+                  edge_type: :branch,
+                  color: dispatch_color(idx)
+                }
+              ]
             else
               []
             end
@@ -165,6 +173,7 @@ defmodule Reach.Visualize.ControlFlow do
           )
 
         exit_line = func_end_line(func, file)
+
         exit_node =
           make_node(
             "#{func_id}_exit",
@@ -427,7 +436,9 @@ defmodule Reach.Visualize.ControlFlow do
     |> Enum.map(fn block ->
       first_v = hd(block)
       {start_l, _} = Map.fetch!(vertex_ranges, first_v)
-      raw_end_l = block |> Enum.map(fn v -> elem(Map.fetch!(vertex_ranges, v), 1) end) |> Enum.max()
+
+      raw_end_l =
+        block |> Enum.map(fn v -> elem(Map.fetch!(vertex_ranges, v), 1) end) |> Enum.max()
 
       # Clamp end_line so it does not overlap with any other block
       min_next = all_starts |> Enum.filter(&(&1 > start_l)) |> Enum.min(fn -> nil end)
@@ -483,8 +494,10 @@ defmodule Reach.Visualize.ControlFlow do
 
   defp block_label(:sequential, node, block, node_map, _cfg) do
     label = ir_label(node)
+
     if length(block) > 1 do
       last = Map.get(node_map, List.last(block))
+
       if last && last != node do
         "#{label}..#{ir_label(last)}"
       else
