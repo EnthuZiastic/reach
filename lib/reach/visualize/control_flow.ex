@@ -174,6 +174,11 @@ defmodule Reach.Visualize.ControlFlow do
 
         exit_line = func_end_line(func, file)
 
+        exit_src = highlight_line(file, exit_line)
+
+        exit_src =
+          if source_blank?(exit_src), do: Visualize.highlight_source("end"), else: exit_src
+
         exit_node =
           make_node(
             "#{func_id}_exit",
@@ -181,7 +186,7 @@ defmodule Reach.Visualize.ControlFlow do
             "end",
             exit_line,
             exit_line,
-            highlight_line(file, exit_line)
+            exit_src
           )
 
         exit_id = "#{func_id}_exit"
@@ -262,6 +267,11 @@ defmodule Reach.Visualize.ControlFlow do
           highlight_line(file, func_start)
         )
 
+      exit_source = highlight_line(file, func_end)
+
+      exit_source =
+        if source_blank?(exit_source), do: Visualize.highlight_source("end"), else: exit_source
+
       exit_node =
         make_node(
           "#{func.id}_exit",
@@ -269,7 +279,7 @@ defmodule Reach.Visualize.ControlFlow do
           "end",
           func_end,
           func_end,
-          highlight_line(file, func_end)
+          exit_source
         )
 
       first_block_id = find_entry_target(cfg, block_for_vertex)
@@ -407,22 +417,13 @@ defmodule Reach.Visualize.ControlFlow do
       {[], _} ->
         [List.flatten(group)]
 
-      {_winners, []} ->
-        if length(priority) > 1 do
-          # Multiple branch blocks on same line — merge into one
-          [List.flatten(priority)]
-        else
-          priority
-        end
+      {[single], _seq} ->
+        absorbed = List.flatten(seq)
+        [single ++ absorbed]
 
-      {winners, _seq} ->
-        if length(priority) > 1 do
-          # Multiple branch blocks + seq blocks on same line — merge all
-          [List.flatten(group)]
-        else
-          absorbed = List.flatten(seq)
-          Enum.map(winners, fn block -> block ++ absorbed end)
-        end
+      {_multiple, _} ->
+        # Multiple branch blocks on same line — merge all into one
+        [List.flatten(group)]
     end
   end
 
@@ -457,6 +458,16 @@ defmodule Reach.Visualize.ControlFlow do
 
       make_node(block_id, type, label, start_l, end_l, source)
     end)
+    |> Enum.reject(&(source_blank?(&1.source_html) and &1.type not in [:entry, :exit]))
+  end
+
+  defp source_blank?(nil), do: true
+
+  defp source_blank?(html) do
+    html
+    |> String.replace(~r/<[^>]+>/, "")
+    |> String.trim()
+    |> Kernel.==("")
   end
 
   defp block_type(block, branch_vertices, node_map) do

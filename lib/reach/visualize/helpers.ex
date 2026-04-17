@@ -214,8 +214,25 @@ defmodule Reach.Visualize.Helpers do
     fallback = file_line_count(file) || (start || 1) + 50
 
     case Map.get(cache, file) do
-      nil -> fallback
-      map -> Map.get(map, start, fallback)
+      nil ->
+        fallback
+
+      map ->
+        case Map.get(map, start) do
+          nil ->
+            # For Gleam: function head line may differ from body start line.
+            # Find the nearest def start <= our start line.
+            nearest =
+              map
+              |> Map.keys()
+              |> Enum.filter(&(&1 <= start))
+              |> Enum.max(fn -> nil end)
+
+            if nearest, do: Map.get(map, nearest), else: fallback
+
+          end_line ->
+            end_line
+        end
     end
   end
 

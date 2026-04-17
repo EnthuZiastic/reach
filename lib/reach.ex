@@ -101,6 +101,14 @@ defmodule Reach do
     opts = Keyword.put(opts, :language, language)
 
     case language do
+      :gleam ->
+        opts = Keyword.put_new(opts, :file, path)
+
+        case Frontend.Gleam.parse_file(path, opts) do
+          {:ok, nodes} -> {:ok, SystemDependence.build(nodes, opts)}
+          {:error, _} = err -> err
+        end
+
       :erlang ->
         opts = Keyword.put_new(opts, :file, path)
 
@@ -837,6 +845,7 @@ defmodule Reach do
   defp language_from_extension(path) do
     case Path.extname(path) do
       ext when ext in [".erl", ".hrl"] -> :erlang
+      ".gleam" -> :gleam
       _ -> :elixir
     end
   end

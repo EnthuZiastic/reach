@@ -190,6 +190,7 @@ defmodule Reach.Project do
 
         result =
           case language do
+            :gleam -> Frontend.Gleam.parse_file(path, file: path)
             :erlang -> Frontend.Erlang.parse_file(path, file: path)
             :elixir -> parse_elixir_file(path, counter)
           end

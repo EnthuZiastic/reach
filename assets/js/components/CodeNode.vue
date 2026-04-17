@@ -29,7 +29,7 @@ const lines = props.data.sourceHtml
   : props.data.sourceText
     ? props.data.sourceText.split("\n")
     : props.data.lines || []
-const showLabel = props.data.label && props.data.nodeType !== "expression" && props.data.nodeType !== "exit"
+const showLabel = props.data.label && props.data.nodeType !== "expression"
 </script>
 
 <template>

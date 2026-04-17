@@ -328,16 +328,67 @@ defmodule Reach.Visualize do
   end
 
   defp build_def_line_map(file) do
-    with {:ok, source} <- File.read(file),
-         {:ok, ast} <-
-           Code.string_to_quoted(source,
-             columns: true,
-             token_metadata: true,
-             file: file
-           ) do
-      collect_def_ranges(ast)
+    if String.ends_with?(file, ".gleam") do
+      build_gleam_def_map(file)
     else
-      _ -> %{}
+      with {:ok, source} <- File.read(file),
+           {:ok, ast} <-
+             Code.string_to_quoted(source,
+               columns: true,
+               token_metadata: true,
+               file: file
+             ) do
+        collect_def_ranges(ast)
+      else
+        _ -> %{}
+      end
+    end
+  end
+
+  defp build_gleam_def_map(gleam_path) do
+    case Reach.Frontend.Gleam.find_generated_erlang(gleam_path) do
+      {:ok, erl_path} ->
+        case :epp.parse_file(to_charlist(erl_path), []) do
+          {:ok, forms} ->
+            gleam_lines =
+              case File.read(gleam_path) do
+                {:ok, src} -> String.split(src, "
+")
+                _ -> []
+              end
+
+            line_count = length(gleam_lines)
+
+            offsets =
+              forms
+              |> Enum.filter(fn
+                {:attribute, _, :file, {f, _}} -> to_string(f) |> String.ends_with?(".gleam")
+                _ -> false
+              end)
+              |> Enum.map(fn {:attribute, _, :file, {_, l}} -> l end)
+              |> Enum.sort()
+
+            Map.new(offsets |> Enum.with_index(), fn {start, idx} ->
+              next = Enum.at(offsets, idx + 1)
+              raw_end = if next, do: next - 1, else: line_count
+
+              end_line =
+                raw_end..start//-1
+                |> Enum.find(fn l ->
+                  line = Enum.at(gleam_lines, l - 1, "")
+                  String.trim(line) != ""
+                end)
+                |> Kernel.||(start)
+
+              {start, end_line}
+            end)
+
+          _ ->
+            %{}
+        end
+
+      _ ->
+        %{}
     end
   end
 

@@ -25,6 +25,7 @@ defmodule Reach.IR.Helpers do
   def language_from_path(path) do
     case Path.extname(path) do
       ext when ext in [".erl", ".hrl"] -> :erlang
+      ".gleam" -> :gleam
       _ -> :elixir
     end
   end
