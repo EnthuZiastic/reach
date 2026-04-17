@@ -16,7 +16,7 @@ Key modules:
 Every change to visualization code MUST maintain these invariants, tested across real codebases (Elixir, Phoenix, Ecto, Oban, Plausible, Livebook — 16k+ functions).
 
 ### Coverage
-1. Every source line of the function body appears in at least one block. Entry = def line, exit = end line. Allow ≤5 missing lines per function (compiler limitation with pipe chains and heredocs).
+1. Every source line of the function body appears in exactly one block. Entry = def line, exit = end line. Allow ≤5 missing lines per function (compiler limitation with pipe chains and heredocs).
 
 ### Disjointness
 2. No two blocks share the same source line range. Block end_line is clamped to `min(raw_end, min_next_start - 1)` across ALL blocks, not just the next one in traversal order. Block end_line uses `Enum.max` across all vertex end_lines in the block (earlier vertices can have wider ranges than the last one).
@@ -50,7 +50,13 @@ Multi-clause functions with bodies use `build_multi_clause_cfg` — the CFG incl
 
 Run the block quality test: `mix test test/visualize/block_quality_test.exs`
 
-Smoke test across real codebases:
+Smoke test across real codebases — clone first if needed:
+```bash
+for repo in elixir-lang/elixir phoenixframework/phoenix elixir-ecto/ecto oban-bg/oban; do
+  name=$(basename $repo)
+  [ -d /tmp/$name ] || git clone --depth 1 https://github.com/$repo /tmp/$name
+done
+```
 ```elixir
 dirs = ["/tmp/phoenix/lib", "/tmp/ecto/lib", "/tmp/oban/lib", "/tmp/elixir/lib"]
 # Check: zero crashes on to_json, verify block quality metrics
