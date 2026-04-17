@@ -1,14 +1,14 @@
 # Reach
 
-Program dependence graph for Elixir and Erlang.
+Program dependence graph for Elixir, Erlang, and Gleam.
 
 Reach builds a graph of **what depends on what** in your code — data
 flow, control flow, and side effects. Trace any value back to its
 origin, find tainted paths from user input to dangerous sinks, or check
 whether two statements can be safely reordered.
 
-Works on Elixir source, Erlang source, and compiled BEAM bytecode.
-Elixir 1.18+ / OTP 27+.
+Works on Elixir source, Erlang source, Gleam source, and compiled BEAM
+bytecode. Elixir 1.18+ / OTP 27+.
 
 ## Quick start
 
@@ -16,7 +16,7 @@ Add Reach to your dependencies:
 
 ```elixir
 def deps do
-  [{:reach, "~> 1.1"}]
+  [{:reach, "~> 1.2"}]
 end
 ```
 
@@ -137,8 +137,24 @@ graph = Reach.file_to_graph!("lib/my_module.ex")
 # Pre-parsed AST (for Credo/ExDNA integration)
 {:ok, graph} = Reach.ast_to_graph(ast)
 
+# Gleam source (requires glance parser)
+{:ok, graph} = Reach.file_to_graph("src/app.gleam")
+
 # Compiled BEAM bytecode — sees macro-expanded code
 {:ok, graph} = Reach.module_to_graph(MyApp.Accounts)
+```
+
+## Gleam support
+
+```bash
+mix reach src/app.gleam
+```
+
+Requires the [glance](https://github.com/lpil/glance) parser:
+
+```bash
+git clone https://github.com/lpil/glance /tmp/glance
+cd /tmp/glance && gleam build --target erlang
 ```
 
 ## Multi-file project analysis
@@ -156,9 +172,9 @@ Reach.Project.taint_analysis(project,
 
 ## What makes Reach different
 
-- **Three frontends** — Elixir source, Erlang source, BEAM bytecode.
-  The BEAM frontend sees `use GenServer` callbacks, macro-expanded code,
-  and generated functions invisible to source analysis.
+- **Four frontends** — Elixir source, Erlang source, Gleam source, BEAM
+  bytecode. The BEAM frontend sees `use GenServer` callbacks, macro-expanded
+  code, and generated functions invisible to source analysis.
 - **OTP-aware** — GenServer state threading, message content flow,
   ETS dependencies, process dictionary tracking, call/reply pairing.
 - **Concurrency edges** — `Process.monitor` → `:DOWN` handlers,
@@ -203,7 +219,7 @@ Edges capture dependencies:
 
 ```mermaid
 graph TD
-    Source["Source (.ex / .erl / .beam)"] --> Frontend
+    Source["Source (.ex / .erl / .gleam / .beam)"] --> Frontend
     Frontend["Frontend → IR Nodes"] --> CFG
     CFG["Control Flow Graph"] --> Dom
     Dom["Dominators"] --> CD
