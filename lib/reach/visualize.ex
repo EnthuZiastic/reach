@@ -345,50 +345,31 @@ defmodule Reach.Visualize do
     end
   end
 
-  defp build_gleam_def_map(gleam_path) do
-    case Reach.Frontend.Gleam.find_generated_erlang(gleam_path) do
-      {:ok, erl_path} ->
-        case :epp.parse_file(to_charlist(erl_path), []) do
-          {:ok, forms} ->
-            gleam_lines =
-              case File.read(gleam_path) do
-                {:ok, src} -> String.split(src, "
-")
-                _ -> []
-              end
+  defp build_gleam_def_map(file) do
+    with {:ok, source} <- File.read(file),
+         {:ok, {:module, _, _, _, _, functions}} <- call_glance(source) do
+      offsets = Reach.Frontend.Gleam.build_line_offsets(source)
 
-            line_count = length(gleam_lines)
+      Map.new(functions, fn {:definition, _, {:function, {:span, s, e}, _, _, _, _, _}} ->
+        start_line = Reach.Frontend.Gleam.byte_to_line(offsets, s)
+        end_line = Reach.Frontend.Gleam.byte_to_line(offsets, max(e - 1, s))
+        {start_line, end_line}
+      end)
+    else
+      _ -> %{}
+    end
+  end
 
-            offsets =
-              forms
-              |> Enum.filter(fn
-                {:attribute, _, :file, {f, _}} -> to_string(f) |> String.ends_with?(".gleam")
-                _ -> false
-              end)
-              |> Enum.map(fn {:attribute, _, :file, {_, l}} -> l end)
-              |> Enum.sort()
+  defp call_glance(source) do
+    if :code.which(:glance) == :non_existing do
+      for p <- Path.wildcard("/tmp/glance/build/dev/erlang/*/ebin"),
+          do: :code.add_patha(to_charlist(p))
+    end
 
-            Map.new(offsets |> Enum.with_index(), fn {start, idx} ->
-              next = Enum.at(offsets, idx + 1)
-              raw_end = if next, do: next - 1, else: line_count
-
-              end_line =
-                raw_end..start//-1
-                |> Enum.find(fn l ->
-                  line = Enum.at(gleam_lines, l - 1, "")
-                  String.trim(line) != ""
-                end)
-                |> Kernel.||(start)
-
-              {start, end_line}
-            end)
-
-          _ ->
-            %{}
-        end
-
-      _ ->
-        %{}
+    if :code.which(:glance) != :non_existing do
+      :glance.module(source)
+    else
+      {:error, :glance_not_available}
     end
   end
 
