@@ -84,10 +84,10 @@ defmodule Reach.Plugins.Ecto do
 
   defp cast_param_edges(_), do: []
 
-  defp repo_module?(nil), do: false
-
-  defp repo_module?(mod) when is_atom(mod) do
+  defp repo_module?(mod) when is_atom(mod) and not is_nil(mod) do
     mod_str = Atom.to_string(mod)
     String.ends_with?(mod_str, "Repo") or String.ends_with?(mod_str, ".Repo")
   end
+
+  defp repo_module?(_), do: false
 end
