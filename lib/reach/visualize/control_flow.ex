@@ -427,7 +427,7 @@ defmodule Reach.Visualize.ControlFlow do
     |> Enum.map(fn block ->
       first_v = hd(block)
       {start_l, _} = Map.fetch!(vertex_ranges, first_v)
-      {_, raw_end_l} = Map.fetch!(vertex_ranges, List.last(block))
+      raw_end_l = block |> Enum.map(fn v -> elem(Map.fetch!(vertex_ranges, v), 1) end) |> Enum.max()
 
       # Clamp end_line so it does not overlap with any other block
       min_next = all_starts |> Enum.filter(&(&1 > start_l)) |> Enum.min(fn -> nil end)
