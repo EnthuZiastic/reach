@@ -1,6 +1,7 @@
 defmodule Reach.Visualize do
   @moduledoc false
 
+  alias Reach.Frontend.Gleam
   alias Reach.Visualize.ControlFlow
 
   # ── Public API ──
@@ -348,11 +349,11 @@ defmodule Reach.Visualize do
   defp build_gleam_def_map(file) do
     with {:ok, source} <- File.read(file),
          {:ok, {:module, _, _, _, _, functions}} <- call_glance(source) do
-      offsets = Reach.Frontend.Gleam.build_line_offsets(source)
+      offsets = Gleam.build_line_offsets(source)
 
       Map.new(functions, fn {:definition, _, {:function, {:span, s, e}, _, _, _, _, _}} ->
-        start_line = Reach.Frontend.Gleam.byte_to_line(offsets, s)
-        end_line = Reach.Frontend.Gleam.byte_to_line(offsets, max(e - 1, s))
+        start_line = Gleam.byte_to_line(offsets, s)
+        end_line = Gleam.byte_to_line(offsets, max(e - 1, s))
         {start_line, end_line}
       end)
     else
@@ -367,6 +368,7 @@ defmodule Reach.Visualize do
     end
 
     if :code.which(:glance) != :non_existing do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
       apply(:glance, :module, [source])
     else
       {:error, :glance_not_available}

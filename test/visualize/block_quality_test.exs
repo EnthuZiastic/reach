@@ -88,61 +88,55 @@ defmodule Reach.Visualize.BlockQualityTest do
   end
 
   defp check_coverage(violations, name, nodes, func_start, func_end, source_lines) do
-    body_blocks =
-      nodes
-      |> Enum.reject(fn n -> n["type"] == "exit" end)
+    body_blocks = Enum.reject(nodes, &(&1["type"] == "exit"))
 
-    covered_lines =
-      body_blocks
-      |> Enum.flat_map(fn b ->
-        s = b["start_line"]
-        e = b["end_line"]
-        if s && e && s > 0 && e >= s, do: Range.new(s, e), else: []
-      end)
-      |> MapSet.new()
-
-    # Also include the exit block's line (covers the 'end' line)
-    exit_block = Enum.find(nodes, &(&1["type"] == "exit"))
-
-    covered_lines =
-      if exit_block && exit_block["start_line"] do
-        MapSet.put(covered_lines, exit_block["start_line"])
-      else
-        covered_lines
-      end
-
-    expected_lines =
-      Range.new(func_start, func_end)
-      |> Enum.filter(fn l ->
-        line = Enum.at(source_lines, l - 1, "")
-        trimmed = String.trim(line)
-        # Skip blank lines and comment-only lines
-        trimmed != "" and not String.starts_with?(trimmed, "#")
-      end)
-      |> MapSet.new()
-
+    covered_lines = collect_covered_lines(body_blocks, nodes)
+    expected_lines = collect_expected_lines(func_start, func_end, source_lines)
     missing = MapSet.difference(expected_lines, covered_lines)
 
-    if MapSet.size(missing) > 0 do
-      missing_list = MapSet.to_list(missing) |> Enum.sort()
-      # Allow gaps up to 3 lines — compiler loses source spans for
-      # multi-line strings, macro expansions, with desugaring, etc.
-      if length(missing_list) > 5 do
-        [{:coverage, name, "missing lines: #{Enum.join(missing_list, ", ")}"} | violations]
-      else
-        violations
-      end
+    missing_list = MapSet.to_list(missing) |> Enum.sort()
+
+    if length(missing_list) > 5 do
+      [{:coverage, name, "missing lines: #{Enum.join(missing_list, ", ")}"} | violations]
     else
       violations
     end
   end
 
+  defp collect_covered_lines(body_blocks, nodes) do
+    lines =
+      Enum.flat_map(body_blocks, fn b ->
+        s = b["start_line"]
+        e = b["end_line"]
+        if s && e && s > 0 && e >= s, do: Range.new(s, e), else: []
+      end)
+
+    exit_block = Enum.find(nodes, &(&1["type"] == "exit"))
+
+    if exit_block && exit_block["start_line"] do
+      MapSet.put(MapSet.new(lines), exit_block["start_line"])
+    else
+      MapSet.new(lines)
+    end
+  end
+
+  defp collect_expected_lines(func_start, func_end, source_lines) do
+    Range.new(func_start, func_end)
+    |> Enum.filter(fn l ->
+      line = Enum.at(source_lines, l - 1, "")
+      trimmed = String.trim(line)
+      trimmed != "" and not String.starts_with?(trimmed, "#")
+    end)
+    |> MapSet.new()
+  end
+
   # R2: No overlapping blocks (except entry shares def line)
   defp check_disjointness(violations, name, nodes) do
     body_blocks =
-      nodes
-      |> Enum.filter(fn n -> n["type"] not in ["entry", "exit"] end)
-      |> Enum.filter(fn n -> n["start_line"] != nil and n["end_line"] != nil end)
+      Enum.filter(nodes, fn n ->
+        n["type"] not in ["entry", "exit"] and
+          n["start_line"] != nil and n["end_line"] != nil
+      end)
 
     overlaps =
       for b1 <- body_blocks, b2 <- body_blocks, b1["id"] < b2["id"] do

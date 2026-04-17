@@ -73,139 +73,171 @@ defmodule Reach.Visualize.ControlFlow do
 
   defp build_multi_clause_cfg(func, clauses, file, func_start) do
     func_end = func_end_line(func, file)
+
+    if func_end <= func_start do
+      source = Visualize.extract_func_source(func)
+      fallback_single_block(func, source, func_start)
+    else
+      build_multi_clause_from_cfg(func, clauses, file, func_start, func_end)
+    end
+  end
+
+  defp build_multi_clause_from_cfg(func, clauses, file, func_start, func_end) do
+    cfg = ControlFlow.build(func)
+    all_ir = IR.all_nodes(func)
+    node_map = Map.new(all_ir, &{&1.id, &1})
+    clause_ids = MapSet.new(clauses, & &1.id)
+
+    ir_vertices = collect_ir_vertices(cfg, node_map, clause_ids, func_start)
+
+    if ir_vertices == [] do
+      source = Visualize.extract_func_source(func)
+      fallback_single_block(func, source, func_start)
+    else
+      build_multi_clause_blocks(
+        func,
+        clauses,
+        cfg,
+        ir_vertices,
+        node_map,
+        file,
+        func_start,
+        func_end
+      )
+    end
+  end
+
+  defp collect_ir_vertices(cfg, node_map, clause_ids, func_start) do
+    cfg
+    |> Graph.vertices()
+    |> Enum.filter(fn v ->
+      is_integer(v) and Map.has_key?(node_map, v) and
+        (v in clause_ids or
+           span_field(Map.get(node_map, v), :start_line) not in [nil, func_start])
+    end)
+    |> Enum.sort_by(fn v ->
+      span_field(Map.get(node_map, v), :start_line) || func_start
+    end)
+  end
+
+  defp build_multi_clause_blocks(
+         func,
+         clauses,
+         cfg,
+         ir_vertices,
+         node_map,
+         file,
+         func_start,
+         func_end
+       ) do
     func_id = to_string(func.id)
     name = func.meta[:name]
     arity = func.meta[:arity] || 0
 
-    if func_end <= func_start do
-      source = Visualize.extract_func_source(func)
-      {nodes, edges} = fallback_single_block(func, source, func_start)
-      {nodes, edges}
-    else
-      cfg = ControlFlow.build(func)
-      all_ir = IR.all_nodes(func)
-      node_map = Map.new(all_ir, &{&1.id, &1})
+    vertex_ranges = compute_vertex_ranges(ir_vertices, node_map, func_start, func_end)
+    vertex_ranges = adjust_clause_ranges(clauses, vertex_ranges, func_start, func_end)
 
-      # Include clause nodes in the graph (normally filtered out)
-      clause_ids = MapSet.new(clauses, & &1.id)
+    branch_vertices = detect_branches(cfg)
 
-      ir_vertices =
-        cfg
-        |> Graph.vertices()
-        |> Enum.filter(fn v ->
-          is_integer(v) and Map.has_key?(node_map, v) and
-            (v in clause_ids or
-               span_field(Map.get(node_map, v), :start_line) not in [nil, func_start])
-        end)
-        |> Enum.sort_by(fn v ->
-          span_field(Map.get(node_map, v), :start_line) || func_start
-        end)
+    blocks = build_viz_blocks(ir_vertices, cfg, vertex_ranges, branch_vertices)
+    blocks = merge_same_line_blocks(blocks, vertex_ranges, branch_vertices)
 
-      if ir_vertices == [] do
-        source = Visualize.extract_func_source(func)
-        {nodes, edges} = fallback_single_block(func, source, func_start)
-        {nodes, edges}
+    viz_nodes =
+      blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file, cfg)
+
+    block_for_vertex = build_block_map(blocks)
+    viz_edges = build_viz_edges(cfg, block_for_vertex, branch_vertices, node_map)
+
+    dispatch_edges = build_dispatch_edges(clauses, block_for_vertex, func_id)
+
+    entry =
+      make_node(
+        func_id,
+        :entry,
+        "#{name}/#{arity}",
+        func_start,
+        func_start,
+        highlight_line(file, func_start)
+      )
+
+    {exit_node, exit_edges} = build_exit_node(func, cfg, block_for_vertex, file, func_id)
+
+    all_nodes = [entry | viz_nodes] ++ [exit_node]
+    all_edges = dispatch_edges ++ viz_edges ++ exit_edges
+
+    {all_nodes, all_edges}
+  end
+
+  defp adjust_clause_ranges(clauses, vertex_ranges, func_start, func_end) do
+    Enum.reduce(clauses, vertex_ranges, fn clause, ranges ->
+      child_start =
+        clause.children
+        |> Enum.flat_map(&collect_span_lines/1)
+        |> Enum.min(fn -> nil end)
+
+      if child_start && child_start > func_start do
+        Map.put(
+          ranges,
+          clause.id,
+          {child_start, elem(Map.get(ranges, clause.id, {child_start, func_end}), 1)}
+        )
       else
-        vertex_ranges = compute_vertex_ranges(ir_vertices, node_map, func_start, func_end)
-
-        # Adjust clause node ranges to start at their actual body line
-        vertex_ranges =
-          Enum.reduce(clauses, vertex_ranges, fn clause, ranges ->
-            child_start =
-              clause.children
-              |> Enum.flat_map(&collect_span_lines/1)
-              |> Enum.min(fn -> nil end)
-
-            if child_start && child_start > func_start do
-              Map.put(
-                ranges,
-                clause.id,
-                {child_start, elem(Map.get(ranges, clause.id, {child_start, func_end}), 1)}
-              )
-            else
-              ranges
-            end
-          end)
-
-        branch_vertices = detect_branches(cfg)
-
-        blocks = build_viz_blocks(ir_vertices, cfg, vertex_ranges, branch_vertices)
-        blocks = merge_same_line_blocks(blocks, vertex_ranges, branch_vertices)
-
-        viz_nodes =
-          blocks_to_viz_nodes(blocks, vertex_ranges, branch_vertices, node_map, file, cfg)
-
-        block_for_vertex = build_block_map(blocks)
-        viz_edges = build_viz_edges(cfg, block_for_vertex, branch_vertices, node_map)
-
-        # Add dispatch edges from entry to each clause
-        dispatch_edges =
-          clauses
-          |> Enum.with_index()
-          |> Enum.flat_map(fn {clause, idx} ->
-            target_block = Map.get(block_for_vertex, clause.id)
-
-            if target_block do
-              [
-                %{
-                  id: "dispatch_#{func_id}_#{clause.id}",
-                  source: func_id,
-                  target: target_block,
-                  label: clause_pattern(clause),
-                  edge_type: :branch,
-                  color: dispatch_color(idx)
-                }
-              ]
-            else
-              []
-            end
-          end)
-
-        # Add entry node
-        entry =
-          make_node(
-            func_id,
-            :entry,
-            "#{name}/#{arity}",
-            func_start,
-            func_start,
-            highlight_line(file, func_start)
-          )
-
-        exit_line = func_end_line(func, file)
-
-        exit_src = highlight_line(file, exit_line)
-
-        exit_src =
-          if source_blank?(exit_src), do: Visualize.highlight_source("end"), else: exit_src
-
-        exit_node =
-          make_node(
-            "#{func_id}_exit",
-            :exit,
-            "end",
-            exit_line,
-            exit_line,
-            exit_src
-          )
-
-        exit_id = "#{func_id}_exit"
-        exit_targets = find_exit_predecessors(cfg, block_for_vertex)
-
-        exit_edges =
-          if length(exit_targets) > 1 do
-            Enum.map(exit_targets, &converge_edge(&1, exit_id))
-          else
-            Enum.map(exit_targets, &seq_edge(&1, exit_id))
-          end
-          |> Enum.reject(&is_nil/1)
-
-        all_nodes = [entry | viz_nodes] ++ [exit_node]
-        all_edges = dispatch_edges ++ viz_edges ++ exit_edges
-
-        {all_nodes, all_edges}
+        ranges
       end
-    end
+    end)
+  end
+
+  defp build_dispatch_edges(clauses, block_for_vertex, func_id) do
+    clauses
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {clause, idx} ->
+      target_block = Map.get(block_for_vertex, clause.id)
+
+      if target_block do
+        [
+          %{
+            id: "dispatch_#{func_id}_#{clause.id}",
+            source: func_id,
+            target: target_block,
+            label: clause_pattern(clause),
+            edge_type: :branch,
+            color: dispatch_color(idx)
+          }
+        ]
+      else
+        []
+      end
+    end)
+  end
+
+  defp build_exit_node(func, cfg, block_for_vertex, file, func_id) do
+    exit_line = func_end_line(func, file)
+
+    exit_src = highlight_line(file, exit_line)
+    exit_src = if source_blank?(exit_src), do: Visualize.highlight_source("end"), else: exit_src
+
+    exit_node =
+      make_node(
+        "#{func_id}_exit",
+        :exit,
+        "end",
+        exit_line,
+        exit_line,
+        exit_src
+      )
+
+    exit_id = "#{func_id}_exit"
+    exit_targets = find_exit_predecessors(cfg, block_for_vertex)
+
+    exit_edges =
+      if length(exit_targets) > 1 do
+        Enum.map(exit_targets, &converge_edge(&1, exit_id))
+      else
+        Enum.map(exit_targets, &seq_edge(&1, exit_id))
+      end
+      |> Enum.reject(&is_nil/1)
+
+    {exit_node, exit_edges}
   end
 
   defp collect_span_lines(node) do
