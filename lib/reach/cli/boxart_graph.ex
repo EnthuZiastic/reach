@@ -32,7 +32,7 @@ defmodule Reach.CLI.BoxartGraph do
         Graph.add_edge(g, from, to)
       end)
 
-    IO.puts(Boxart.render(graph, direction: :td, theme: :default, max_width: term_width()))
+    IO.puts(Boxart.Render.Mindmap.render(graph, []))
   end
 
   def render_otp_state_diagram(callbacks) do
