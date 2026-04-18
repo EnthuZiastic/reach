@@ -3,6 +3,13 @@ defmodule Reach.CLI.BoxartGraph do
 
   alias Reach.CLI.Format
 
+  defp term_width do
+    case :io.columns() do
+      {:ok, cols} -> cols
+      _ -> 120
+    end
+  end
+
   def available? do
     Code.ensure_loaded?(Boxart)
   end
@@ -25,7 +32,7 @@ defmodule Reach.CLI.BoxartGraph do
         Graph.add_edge(g, from, to)
       end)
 
-    IO.puts(Boxart.render(graph, direction: :lr, theme: :default))
+    IO.puts(Boxart.render(graph, direction: :td, theme: :default, max_width: term_width()))
   end
 
   def render_otp_state_diagram(callbacks) do
@@ -52,7 +59,7 @@ defmodule Reach.CLI.BoxartGraph do
         graph
       end
 
-    IO.puts(Boxart.render(graph, direction: :td, theme: :default))
+    IO.puts(Boxart.render(graph, direction: :td, theme: :default, max_width: term_width()))
   end
 
   def render_cfg(func_node, file) do
@@ -86,7 +93,7 @@ defmodule Reach.CLI.BoxartGraph do
         Graph.add_edge(g, e.v1, e.v2, opts)
       end)
 
-    IO.puts(Boxart.render(graph, direction: :td, theme: :default))
+    IO.puts(Boxart.render(graph, direction: :td, theme: :default, max_width: term_width()))
   end
 
   # ── Helpers ──
