@@ -41,7 +41,7 @@ defmodule Mix.Tasks.Reach.Deps do
     format = opts[:format] || "text"
     depth = opts[:depth] || 3
 
-    caller_list = Project.callers(project, target, depth)
+    caller_list = Project.callers(project, target, 1)
     callee_tree = Project.callees(project, target, depth)
     shared = find_shared_state(project, target)
 
