@@ -65,20 +65,39 @@ defmodule Reach.CLI.BoxartGraph do
   def render_cfg(func_node, file) do
     cfg = Reach.ControlFlow.build(func_node)
 
-    vertices =
-      cfg
-      |> Graph.vertices()
-      |> Enum.filter(fn v -> v != :entry and v != :exit end)
-
     node_map =
       func_node
       |> Reach.IR.all_nodes()
       |> Map.new(&{&1.id, &1})
 
+    vertices =
+      cfg
+      |> Graph.vertices()
+      |> Enum.filter(fn v -> v != :entry and v != :exit end)
+
+    # Merge vertices that share the same source line
+    line_map =
+      vertices
+      |> Enum.group_by(fn v ->
+        case Map.get(node_map, v) do
+          %{source_span: %{start_line: l}} when is_integer(l) -> l
+          _ -> v
+        end
+      end)
+
+    canonical =
+      line_map
+      |> Enum.flat_map(fn {_line, [first | rest]} ->
+        Enum.map(rest, &{&1, first})
+      end)
+      |> Map.new()
+
+    unique_vertices = line_map |> Map.values() |> Enum.map(&hd/1)
+
     graph = Graph.new()
 
     graph =
-      Enum.reduce([:entry | vertices] ++ [:exit], graph, fn v, g ->
+      Enum.reduce([:entry | unique_vertices] ++ [:exit], graph, fn v, g ->
         attrs = vertex_attrs(v, node_map, file)
         Graph.add_vertex(g, v, attrs)
       end)
@@ -87,9 +106,16 @@ defmodule Reach.CLI.BoxartGraph do
       cfg
       |> Graph.edges()
       |> Enum.reduce(graph, fn e, g ->
-        label = edge_label(e.label)
-        opts = if label, do: [label: label], else: []
-        Graph.add_edge(g, e.v1, e.v2, opts)
+        from = Map.get(canonical, e.v1, e.v1)
+        to = Map.get(canonical, e.v2, e.v2)
+
+        if from != to do
+          label = edge_label(e.label)
+          opts = if label, do: [label: label], else: []
+          Graph.add_edge(g, from, to, opts)
+        else
+          g
+        end
       end)
 
     IO.puts(Boxart.render(graph, direction: :td, theme: :default, max_width: term_width()))
