@@ -124,19 +124,8 @@ defmodule Mix.Tasks.Reach.Otp do
       name in [:init, :handle_call, :handle_cast, :handle_info, :handle_continue]
     end)
     |> Enum.map(fn {{name, arity}, node} ->
-      all = IR.all_nodes(node)
-
-      _state_param = find_state_param(node, arity)
-      writes = count_state_writes(all)
-      reads = count_state_reads(all)
-
-      action =
-        cond do
-          writes > 0 and reads == 0 -> :writes
-          writes > 0 and reads > 0 -> :read_write
-          reads > 0 -> :reads
-          true -> :unknown
-        end
+      state_param = find_state_param(node, arity)
+      action = infer_state_action(node, state_param)
 
       %{
         callback: {name, arity},
@@ -152,22 +141,93 @@ defmodule Mix.Tasks.Reach.Otp do
     |> Enum.flat_map(fn clause ->
       clause.children |> Enum.take(arity) |> Enum.take(-1)
     end)
-    |> Enum.filter(&(&1.type == :var))
+    |> Enum.map(&unwrap_state_param/1)
+    |> Enum.reject(&is_nil/1)
     |> List.first()
   end
 
-  defp count_state_writes(nodes) do
-    Enum.count(nodes, fn n ->
-      n.type == :call and n.meta[:function] in [:put, :update, :update!] and
-        n.meta[:module] in [Map, Keyword, Process]
+  defp unwrap_state_param(%{type: :match, children: children}) do
+    # Prefer var over struct (e.g. %State{} = state → use :state)
+    Enum.find(children, &(&1.type == :var)) ||
+      Enum.find(children, &(&1.type in [:struct, :map])) ||
+      Enum.find_value(children, &unwrap_state_param/1)
+  end
+
+  defp unwrap_state_param(%{type: t} = node) when t in [:var, :struct, :map], do: node
+  defp unwrap_state_param(_), do: nil
+
+  defp infer_state_action(_node, nil), do: :unknown
+
+  defp infer_state_action(node, state_param) do
+    state_name = state_param_name(state_param)
+    all = IR.all_nodes(node)
+
+    cond do
+      writes_state?(all, state_name) -> :read_write
+      reads_state?(all, state_name) -> :reads
+      state_name != nil -> :passes_through
+      true -> :unknown
+    end
+  end
+
+  defp reads_state?(all, state_name) do
+    field_access?(all, state_name) or state_passed_as_arg?(all, state_name)
+  end
+
+  defp field_access?(all, state_name) do
+    Enum.any?(all, fn n ->
+      n.type == :call and n.meta[:kind] == :remote and n.meta[:module] == state_name
     end)
   end
 
-  defp count_state_reads(nodes) do
-    Enum.count(nodes, fn n ->
-      n.type == :call and n.meta[:function] in [:get, :fetch, :fetch!] and
-        n.meta[:module] in [Map, Keyword, Process]
+  defp state_passed_as_arg?(all, state_name) do
+    Enum.any?(all, fn n ->
+      n.type == :call and Enum.any?(n.children, &var_named?(&1, state_name))
     end)
+  end
+
+  defp writes_state?(all, state_name) do
+    Enum.any?(all, fn n ->
+      struct_or_map_update?(n, state_name) or map_write_call?(n, state_name)
+    end)
+  end
+
+  defp struct_or_map_update?(n, state_name) do
+    n.type in [:struct, :map] and has_update_syntax?(n, state_name)
+  end
+
+  defp map_write_call?(n, state_name) do
+    n.type == :call and
+      n.meta[:function] in [:put, :update, :merge, :delete] and
+      n.meta[:module] == Map and
+      Enum.any?(n.children, &var_named?(&1, state_name))
+  end
+
+  defp state_param_name(%{type: :var, meta: %{name: name}}), do: name
+
+  defp state_param_name(%{type: type, children: children}) when type in [:struct, :map] do
+    case Enum.find(children, &(&1.type == :match)) do
+      %{children: [_, %{type: :var, meta: %{name: name}}]} ->
+        name
+
+      _ ->
+        case List.last(children) do
+          %{type: :var, meta: %{name: name}} -> name
+          _ -> nil
+        end
+    end
+  end
+
+  defp state_param_name(_), do: nil
+
+  defp var_named?(%{type: :var, meta: %{name: name}}, target), do: name == target
+  defp var_named?(_, _), do: false
+
+  defp has_update_syntax?(%{children: children}, state_name) do
+    case children do
+      [%{type: :var, meta: %{name: ^state_name}} | _] -> true
+      _ -> false
+    end
   end
 
   defp find_hidden_coupling(nodes) do
@@ -373,6 +433,7 @@ defmodule Mix.Tasks.Reach.Otp do
   defp action_label(:writes), do: "writes state"
   defp action_label(:read_write), do: "read+write"
   defp action_label(:reads), do: "reads state"
+  defp action_label(:passes_through), do: "passes through"
   defp action_label(:unknown), do: "no state access"
 
   defp render_oneline(result) do
