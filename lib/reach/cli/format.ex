@@ -122,10 +122,6 @@ defmodule Reach.CLI.Format do
     end
   end
 
-  def loc(file, line) when is_binary(file) and is_integer(line) do
-    faint(file <> ":" <> to_string(line))
-  end
-
   def loc(file, line) when is_binary(file) do
     faint(file <> ":" <> to_string(line))
   end

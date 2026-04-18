@@ -107,7 +107,7 @@ defmodule Mix.Tasks.Reach.Modules do
     func_def
     |> Reach.IR.all_nodes()
     |> Enum.count(fn n ->
-      n.type in [:case, :clause] or
+      n.type == :case or
         (n.type == :binary_op and n.meta[:operator] in [:and, :or, :&&, :||])
     end)
   end
