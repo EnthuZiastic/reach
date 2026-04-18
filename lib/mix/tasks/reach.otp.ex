@@ -188,7 +188,9 @@ defmodule Mix.Tasks.Reach.Otp do
 
   defp writes_state?(all, state_name) do
     Enum.any?(all, fn n ->
-      struct_or_map_update?(n, state_name) or map_write_call?(n, state_name)
+      struct_or_map_update?(n, state_name) or
+        map_write_call?(n, state_name) or
+        ets_write_with_state?(n, state_name)
     end)
   end
 
@@ -200,6 +202,13 @@ defmodule Mix.Tasks.Reach.Otp do
     n.type == :call and
       n.meta[:function] in [:put, :update, :merge, :delete] and
       n.meta[:module] == Map and
+      Enum.any?(n.children, &var_named?(&1, state_name))
+  end
+
+  defp ets_write_with_state?(n, state_name) do
+    n.type == :call and
+      n.meta[:module] == :ets and
+      n.meta[:function] in [:insert, :insert_new, :update_element, :delete] and
       Enum.any?(n.children, &var_named?(&1, state_name))
   end
 
