@@ -45,7 +45,12 @@ defmodule Mix.Tasks.Reach.Deps do
     callee_tree = Project.callees(project, target, depth)
     shared = find_shared_state(project, target)
 
-    result = %{target: target, callers: caller_list, callees: callee_tree, shared_state_writers: shared}
+    result = %{
+      target: target,
+      callers: caller_list,
+      callees: callee_tree,
+      shared_state_writers: shared
+    }
 
     case format do
       "json" -> Format.render(result, "reach.deps", format: "json", pretty: true)
@@ -66,17 +71,19 @@ defmodule Mix.Tasks.Reach.Deps do
           n.meta[:name] == fun and n.meta[:arity] == arity
       end)
       |> Enum.flat_map(&Reach.IR.all_nodes/1)
-      |> Enum.filter(&(&1.type == :call))
-      |> Enum.filter(fn n -> Reach.Effects.classify(n) in [:write, :read] end)
+      |> Enum.filter(fn n -> n.type == :call and Reach.Effects.classify(n) in [:write, :read] end)
       |> Enum.map(& &1.meta[:function])
 
     nodes
     |> Map.values()
-    |> Enum.filter(&(&1.type == :function_def and {&1.meta[:name], &1.meta[:arity]} != {fun, arity}))
     |> Enum.filter(fn n ->
-      n |> Reach.IR.all_nodes() |> Enum.any?(fn c ->
-        c.type == :call and Reach.Effects.classify(c) == :write and c.meta[:function] in target_calls
-      end)
+      n.type == :function_def and {n.meta[:name], n.meta[:arity]} != {fun, arity} and
+        n
+        |> Reach.IR.all_nodes()
+        |> Enum.any?(fn c ->
+          c.type == :call and Reach.Effects.classify(c) == :write and
+            c.meta[:function] in target_calls
+        end)
     end)
     |> Enum.map(&{&1.meta[:module], &1.meta[:name], &1.meta[:arity]})
   end
@@ -86,8 +93,11 @@ defmodule Mix.Tasks.Reach.Deps do
     IO.puts(Format.header(target_str))
 
     IO.puts(Format.section("Callers"))
+
     case result.callers do
-      [] -> IO.puts("  (no callers found)")
+      [] ->
+        IO.puts("  (no callers found)")
+
       callers ->
         Enum.each(callers, fn %{id: id} ->
           IO.puts("  #{Format.func_id_to_string(id)}")
@@ -98,6 +108,7 @@ defmodule Mix.Tasks.Reach.Deps do
     render_callee_tree(result.callees, "")
 
     IO.puts(Format.section("Shared state writers"))
+
     case result.shared_state_writers do
       [] -> IO.puts("  (none found)")
       writers -> Enum.each(writers, &IO.puts("  #{Format.func_id_to_string(&1)}  ⚠"))
@@ -109,10 +120,14 @@ defmodule Mix.Tasks.Reach.Deps do
   end
 
   defp render_callee_tree([], _prefix), do: nil
+
   defp render_callee_tree(items, prefix) do
     sorted = Enum.sort_by(items, &Format.func_id_to_string(&1.id))
     count = length(sorted)
-    sorted |> Enum.with_index() |> Enum.each(fn {item, idx} ->
+
+    sorted
+    |> Enum.with_index()
+    |> Enum.each(fn {item, idx} ->
       last? = idx == count - 1
       connector = if last?, do: "└── ", else: "├── "
       child_prefix = if last?, do: "    ", else: "│   "
@@ -123,9 +138,11 @@ defmodule Mix.Tasks.Reach.Deps do
 
   defp render_oneline(result) do
     target_str = Format.func_id_to_string(result.target)
+
     Enum.each(result.callers, fn %{id: id} ->
       IO.puts("#{target_str} ← #{Format.func_id_to_string(id)}")
     end)
+
     Enum.each(result.shared_state_writers, fn id ->
       IO.puts("#{target_str} shared_state #{Format.func_id_to_string(id)}")
     end)

@@ -1,6 +1,8 @@
 defmodule Reach.CLI.Project do
   @moduledoc false
 
+  alias Reach.CLI.Format
+
   def load(opts \\ []) do
     Mix.Task.run("compile", ["--no-warnings-as-errors"])
 
@@ -30,9 +32,8 @@ defmodule Reach.CLI.Project do
       fun_string when is_binary(fun_string) ->
         Enum.find(nodes, fn node ->
           node.type == :function_def and
-            Reach.CLI.Format.func_id_to_string(
-              {node.meta[:module], node.meta[:name], node.meta[:arity]}
-            ) =~ fun_string
+            Format.func_id_to_string({node.meta[:module], node.meta[:name], node.meta[:arity]}) =~
+              fun_string
         end)
 
       _ ->
@@ -46,38 +47,49 @@ defmodule Reach.CLI.Project do
         {mod, fun, arity}
 
       name when is_binary(name) ->
-        nodes = Map.values(project.nodes)
-        cg = project.call_graph
-
-        case Regex.run(~r/^([^ ]+)\.(.+)\/(\d+)$/, name) do
-          [_, mod_str, fun_str, arity_str] ->
-            mod = String.split(mod_str, ".") |> Enum.map(&String.to_atom/1) |> Module.concat()
-            fun = String.to_atom(fun_str)
-            arity = String.to_integer(arity_str)
-
-            # Prefer nil module (internal edges) over named module (external edges)
-            cond do
-              Graph.has_vertex?(cg, {nil, fun, arity}) -> {nil, fun, arity}
-              Graph.has_vertex?(cg, {mod, fun, arity}) -> {mod, fun, arity}
-              true -> nil
-            end
-
-          nil ->
-            node =
-              Enum.find(nodes, fn n ->
-                n.type == :function_def and
-                  to_string(n.meta[:name]) == name
-              end)
-
-            if node do
-              {node.meta[:module], node.meta[:name], node.meta[:arity]}
-            else
-              nil
-            end
-        end
+        resolve_function_by_name(project, name)
 
       _ ->
         nil
+    end
+  end
+
+  defp resolve_function_by_name(project, name) do
+    nodes = Map.values(project.nodes)
+    cg = project.call_graph
+
+    case Regex.run(~r/^([^ ]+)\.(.+)\/(\d+)$/, name) do
+      [_, mod_str, fun_str, arity_str] ->
+        resolve_mfa(cg, mod_str, fun_str, arity_str)
+
+      nil ->
+        resolve_by_function_name(nodes, name)
+    end
+  end
+
+  defp resolve_mfa(cg, mod_str, fun_str, arity_str) do
+    mod = String.split(mod_str, ".") |> Enum.map(&String.to_atom/1) |> Module.concat()
+    fun = String.to_atom(fun_str)
+    arity = String.to_integer(arity_str)
+
+    cond do
+      Graph.has_vertex?(cg, {nil, fun, arity}) -> {nil, fun, arity}
+      Graph.has_vertex?(cg, {mod, fun, arity}) -> {mod, fun, arity}
+      true -> nil
+    end
+  end
+
+  defp resolve_by_function_name(nodes, name) do
+    node =
+      Enum.find(nodes, fn n ->
+        n.type == :function_def and
+          to_string(n.meta[:name]) == name
+      end)
+
+    if node do
+      {node.meta[:module], node.meta[:name], node.meta[:arity]}
+    else
+      nil
     end
   end
 
@@ -114,7 +126,7 @@ defmodule Reach.CLI.Project do
     end)
     |> case do
       nil -> "unknown"
-      node -> Reach.CLI.Format.location(node)
+      node -> Format.location(node)
     end
   end
 
@@ -123,6 +135,7 @@ defmodule Reach.CLI.Project do
 
   def all_variants(cg, {nil, fun, arity}) do
     named_mod = find_named_module(cg, fun, arity)
+
     [{nil, fun, arity}, {named_mod, fun, arity}]
     |> Enum.uniq()
     |> Enum.filter(&Graph.has_vertex?(cg, &1))
@@ -152,27 +165,36 @@ defmodule Reach.CLI.Project do
           Graph.in_neighbors(cg, f)
           |> Enum.filter(&mfa?/1)
           |> Enum.reject(&MapSet.member?(vis, &1))
+
         {found ++ callers, Enum.reduce(callers, vis, &MapSet.put(&2, &1))}
       end)
 
     acc = acc ++ Enum.map(new_callers, &%{id: &1})
-    if depth > 1, do: do_find_callers(cg, new_callers, depth - 1, new_visited, acc), else: Enum.reverse(acc)
+
+    if depth > 1,
+      do: do_find_callers(cg, new_callers, depth - 1, new_visited, acc),
+      else: Enum.reverse(acc)
   end
 
+  defp walk_callees(_cg, _from, max_depth, current_depth, _visited)
+       when current_depth > max_depth,
+       do: []
+
   defp walk_callees(cg, from, max_depth, current_depth, visited) do
-    if current_depth > max_depth do
+    neighbors = Graph.out_neighbors(cg, from) |> Enum.filter(&mfa?/1)
+
+    Enum.flat_map(neighbors, fn callee ->
+      expand_callee(cg, callee, max_depth, current_depth, visited)
+    end)
+  end
+
+  defp expand_callee(cg, callee, max_depth, current_depth, visited) do
+    if MapSet.member?(visited, callee) do
       []
     else
-      neighbors = Graph.out_neighbors(cg, from) |> Enum.filter(&mfa?/1)
-      Enum.flat_map(neighbors, fn callee ->
-        if MapSet.member?(visited, callee) do
-          []
-        else
-          new_visited = MapSet.put(visited, callee)
-          children = walk_callees(cg, callee, max_depth, current_depth + 1, new_visited)
-          [%{id: callee, depth: current_depth, children: children}]
-        end
-      end)
+      new_visited = MapSet.put(visited, callee)
+      children = walk_callees(cg, callee, max_depth, current_depth + 1, new_visited)
+      [%{id: callee, depth: current_depth, children: children}]
     end
   end
 end

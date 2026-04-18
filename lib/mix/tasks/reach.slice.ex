@@ -21,6 +21,9 @@ defmodule Mix.Tasks.Reach.Slice do
   @switches [format: :string, forward: :boolean, variable: :string]
   @aliases [f: :format]
 
+  alias Reach.CLI.Format
+  alias Reach.CLI.Project
+
   @impl Mix.Task
   def run(args) do
     {opts, target_args, _} = OptionParser.parse(args, switches: @switches, aliases: @aliases)
@@ -29,7 +32,7 @@ defmodule Mix.Tasks.Reach.Slice do
       Mix.raise("Expected a file:line target. Usage: mix reach.slice lib/foo.ex:42")
     end
 
-    project = Reach.CLI.Project.load()
+    project = Project.load()
     format = opts[:format] || "text"
     forward? = Keyword.get(opts, :forward, false)
     var_name = opts[:variable]
@@ -46,41 +49,44 @@ defmodule Mix.Tasks.Reach.Slice do
       Mix.raise("No node found at #{target.file}:#{target.line}")
     end
 
-    graph = project.graph
-
-    slice_ids =
-      if Graph.has_vertex?(graph, node.id) do
-        if forward? do
-          Graph.reachable(graph, [node.id]) -- [node.id]
-        else
-          Graph.reaching(graph, [node.id]) -- [node.id]
-        end
-      else
-        []
-      end
-
+    slice_ids = compute_slice(project.graph, node.id, forward?)
     result = filter_and_format(project, slice_ids, var_name)
+    render(format, node, result, forward?, target)
+  end
 
-    case format do
-      "json" ->
-        Reach.CLI.Format.render(
-          %{
-            target: %{file: target.file, line: target.line, node_id: node.id},
-            direction: if(forward?, do: "forward", else: "backward"),
-            statements: result
-          },
-          "reach.slice",
-          format: "json", pretty: true
-        )
-
-      "oneline" ->
-        Enum.each(result, fn stmt ->
-          IO.puts("#{stmt.file}:#{stmt.line}: #{stmt.description}")
-        end)
-
-      _ ->
-        render_text(node, result, forward?)
+  defp compute_slice(graph, node_id, forward?) do
+    if Graph.has_vertex?(graph, node_id) do
+      if forward? do
+        Graph.reachable(graph, [node_id]) -- [node_id]
+      else
+        Graph.reaching(graph, [node_id]) -- [node_id]
+      end
+    else
+      []
     end
+  end
+
+  defp render("json", node, result, forward?, target) do
+    Format.render(
+      %{
+        target: %{file: target.file, line: target.line, node_id: node.id},
+        direction: if(forward?, do: "forward", else: "backward"),
+        statements: result
+      },
+      "reach.slice",
+      format: "json",
+      pretty: true
+    )
+  end
+
+  defp render("oneline", _node, result, _forward?, _target) do
+    Enum.each(result, fn stmt ->
+      IO.puts("#{stmt.file}:#{stmt.line}: #{stmt.description}")
+    end)
+  end
+
+  defp render(_format, node, result, forward?, _target) do
+    render_text(node, result, forward?)
   end
 
   defp parse_location(raw) do
@@ -166,25 +172,31 @@ defmodule Mix.Tasks.Reach.Slice do
 
   defp describe_node(node) do
     case node.type do
-      :var -> "var #{node.meta[:name]}"
+      :var ->
+        "var #{node.meta[:name]}"
 
       :call ->
         mod = node.meta[:module]
         fun = node.meta[:function]
         if mod && fun, do: "#{inspect(mod)}.#{fun}", else: "call"
 
-      :match -> "match"
-      :literal -> inspect(node.meta[:value])
-      other -> to_string(other)
+      :match ->
+        "match"
+
+      :literal ->
+        inspect(node.meta[:value])
+
+      other ->
+        to_string(other)
     end
   end
 
   defp render_text(node, result, forward?) do
     direction = if forward?, do: "Forward", else: "Backward"
     target_desc = describe_node(node)
-    loc = Reach.CLI.Format.location(node)
+    loc = Format.location(node)
 
-    IO.puts(Reach.CLI.Format.header("#{direction} slice of #{target_desc} (#{loc})"))
+    IO.puts(Format.header("#{direction} slice of #{target_desc} (#{loc})"))
     IO.puts("#{length(result)} statements:\n")
 
     Enum.each(result, fn stmt ->

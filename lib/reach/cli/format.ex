@@ -33,7 +33,7 @@ defmodule Reach.CLI.Format do
     |> maybe_add(:name, node.meta[:name])
     |> maybe_add(:module, node.meta[:module])
     |> maybe_add(:function, node.meta[:function])
-    |> maybe_add(:location, Reach.CLI.Format.location(node))
+    |> maybe_add(:location, location(node))
   end
 
   def jsonify(%{__struct__: _} = struct) do
@@ -52,6 +52,7 @@ defmodule Reach.CLI.Format do
     case t do
       {m, f, a} when is_atom(m) and is_atom(f) and is_number(a) ->
         "#{inspect(m)}.#{f}/#{a}"
+
       _ ->
         t |> Tuple.to_list() |> jsonify()
     end

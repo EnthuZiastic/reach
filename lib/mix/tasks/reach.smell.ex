@@ -23,12 +23,17 @@ defmodule Mix.Tasks.Reach.Smell do
   @switches [format: :string]
   @aliases [f: :format]
 
+  alias Reach.CLI.Format
+  alias Reach.CLI.Project
+  alias Reach.Effects
+  alias Reach.IR
+
   @impl Mix.Task
   def run(args) do
     {opts, _args, _} = OptionParser.parse(args, switches: @switches, aliases: @aliases)
     format = opts[:format] || "text"
 
-    project = Reach.CLI.Project.load()
+    project = Project.load()
 
     findings =
       detect_pipeline_waste(project) ++
@@ -38,7 +43,10 @@ defmodule Mix.Tasks.Reach.Smell do
 
     case format do
       "json" ->
-        Reach.CLI.Format.render(%{findings: findings}, "reach.smell", format: "json", pretty: true)
+        Format.render(%{findings: findings}, "reach.smell",
+          format: "json",
+          pretty: true
+        )
 
       "oneline" ->
         Enum.each(findings, fn f ->
@@ -55,19 +63,18 @@ defmodule Mix.Tasks.Reach.Smell do
   defp detect_pipeline_waste(project) do
     nodes = Map.values(project.nodes)
 
-    # Find sequences of Enum calls within the same function
     func_defs = Enum.filter(nodes, &(&1.type == :function_def))
 
     Enum.flat_map(func_defs, fn func ->
       calls =
         func
-        |> Reach.IR.all_nodes()
+        |> IR.all_nodes()
         |> Enum.filter(fn n ->
           n.type == :call and n.meta[:module] in [Enum, Stream] and
             n.meta[:kind] != :fun_ref and
-            n.meta[:function] != nil
+            n.meta[:function] != nil and
+            n.source_span != nil
         end)
-        |> Enum.filter(& &1.source_span)
         |> Enum.sort_by(fn n -> {n.source_span[:start_line], n.source_span[:start_col] || 0} end)
 
       find_pipeline_patterns(calls, project.graph)
@@ -87,51 +94,70 @@ defmodule Mix.Tasks.Reach.Smell do
   end
 
   defp check_pair(first, second, graph) do
-    connected = data_connected?(first, second, graph)
-
-    cond do
-      connected && reverse_pair?(first, second) ->
-        [%{
-          kind: :redundant_traversal,
-          message: "Enum.reverse → Enum.reverse is a no-op",
-          location: Reach.CLI.Format.location(second)
-        }]
-
-      connected && filter_count?(first, second) ->
-        [%{
-          kind: :suboptimal,
-          message: "Enum.filter → Enum.count: use Enum.count/2 instead",
-          location: Reach.CLI.Format.location(second)
-        }]
-
-      connected && map_count?(first, second) ->
-        [%{
-          kind: :suboptimal,
-          message: "Enum.map → Enum.count: use Enum.count/2 with transform",
-          location: Reach.CLI.Format.location(second)
-        }]
-
-      connected && map_map?(first, second) ->
-        [%{
-          kind: :suboptimal,
-          message: "Enum.map → Enum.map: consider fusing into one pass",
-          location: Reach.CLI.Format.location(second)
-        }]
-
-      connected && filter_filter?(first, second) ->
-        [%{
-          kind: :suboptimal,
-          message: "Enum.filter → Enum.filter: combine predicates into one pass",
-          location: Reach.CLI.Format.location(second)
-        }]
-
-      true ->
-        []
+    if data_connected?(first, second, graph) do
+      detect_pattern(first, second)
+    else
+      []
     end
   end
 
+  defp detect_pattern(first, second) do
+    pattern = classify_pair(first, second)
+    if pattern, do: [smell_for_pattern(pattern, second)], else: []
+  end
+
+  defp classify_pair(first, second) do
+    cond do
+      reverse_pair?(first, second) -> :reverse_reverse
+      filter_count?(first, second) -> :filter_count
+      map_count?(first, second) -> :map_count
+      map_map?(first, second) -> :map_map
+      filter_filter?(first, second) -> :filter_filter
+      true -> nil
+    end
+  end
+
+  defp smell_for_pattern(:reverse_reverse, node) do
+    %{
+      kind: :redundant_traversal,
+      message: "Enum.reverse → Enum.reverse is a no-op",
+      location: Format.location(node)
+    }
+  end
+
+  defp smell_for_pattern(:filter_count, node) do
+    %{
+      kind: :suboptimal,
+      message: "Enum.filter → Enum.count: use Enum.count/2 instead",
+      location: Format.location(node)
+    }
+  end
+
+  defp smell_for_pattern(:map_count, node) do
+    %{
+      kind: :suboptimal,
+      message: "Enum.map → Enum.count: use Enum.count/2 with transform",
+      location: Format.location(node)
+    }
+  end
+
+  defp smell_for_pattern(:map_map, node) do
+    %{
+      kind: :suboptimal,
+      message: "Enum.map → Enum.map: consider fusing into one pass",
+      location: Format.location(node)
+    }
+  end
+
+  defp smell_for_pattern(:filter_filter, node) do
+    %{
+      kind: :suboptimal,
+      message: "Enum.filter → Enum.filter: combine predicates into one pass",
+      location: Format.location(node)
+    }
+  end
+
   defp data_connected?(first, second, graph) do
-    # Check if second depends on first via data flow
     Graph.has_vertex?(graph, first.id) and Graph.has_vertex?(graph, second.id) and
       first.id in Graph.reaching(graph, [second.id])
   rescue
@@ -166,52 +192,47 @@ defmodule Mix.Tasks.Reach.Smell do
 
     func_defs = Enum.filter(nodes, &(&1.type == :function_def))
 
-    Enum.flat_map(func_defs, fn func ->
-      calls =
-        func
-        |> Reach.IR.all_nodes()
-        |> Enum.filter(fn n ->
-          n.type == :call and
-            Reach.Effects.pure?(n) and
-            n.meta[:function] != nil and
-            n.source_span != nil
-        end)
-
-      # Group by {module, function, arity} and find duplicates
-      calls
-      |> Enum.group_by(fn n ->
-        {n.meta[:module], n.meta[:function], n.meta[:arity]}
-      end)
-      |> Enum.flat_map(fn {_key, group} ->
-        if length(group) > 1 do
-          # Check if any pair shares the same args (same variable names)
-          find_same_arg_calls(group)
-        else
-          []
-        end
-      end)
-    end)
+    Enum.flat_map(func_defs, &find_redundant_calls_in_func/1)
     |> Enum.take(20)
+  end
+
+  defp find_redundant_calls_in_func(func) do
+    func
+    |> IR.all_nodes()
+    |> Enum.filter(fn n ->
+      n.type == :call and
+        Effects.pure?(n) and
+        n.meta[:function] != nil and
+        n.source_span != nil
+    end)
+    |> Enum.group_by(fn n -> {n.meta[:module], n.meta[:function], n.meta[:arity]} end)
+    |> Enum.flat_map(fn {_key, group} ->
+      if length(group) > 1, do: find_same_arg_calls(group), else: []
+    end)
   end
 
   defp find_same_arg_calls(calls) do
     calls
     |> Enum.chunk_every(2, 1, [])
     |> Enum.flat_map(fn
-      [a, b] ->
-        if same_args?(a, b) and a.source_span[:start_line] != b.source_span[:start_line] do
-          [%{
-            kind: :redundant_computation,
-            message: "#{call_name(a)} called twice with same args (line #{a.source_span[:start_line]} and #{b.source_span[:start_line]})",
-            location: Reach.CLI.Format.location(b)
-          }]
-        else
-          []
-        end
-
-      _ ->
-        []
+      [a, b] -> maybe_redundant_call(a, b)
+      _ -> []
     end)
+  end
+
+  defp maybe_redundant_call(a, b) do
+    if same_args?(a, b) and a.source_span[:start_line] != b.source_span[:start_line] do
+      [
+        %{
+          kind: :redundant_computation,
+          message:
+            "#{call_name(a)} called twice with same args (line #{a.source_span[:start_line]} and #{b.source_span[:start_line]})",
+          location: Format.location(b)
+        }
+      ]
+    else
+      []
+    end
   end
 
   defp same_args?(a, b) do
@@ -240,26 +261,22 @@ defmodule Mix.Tasks.Reach.Smell do
     nodes
     |> Enum.filter(fn n ->
       n.type == :call and
-        Reach.Effects.classify(n) == :pure and
+        Effects.classify(n) == :pure and
         n.meta[:function] != nil and
         n.source_span != nil and
-        not trivial_call?(n)
-    end)
-    |> Enum.filter(fn n ->
-      # Check if the call's result has any data dependents
-      Graph.has_vertex?(graph, n.id) and
+        not trivial_call?(n) and
+        Graph.has_vertex?(graph, n.id) and
         Graph.out_degree(graph, n.id) == 0
     end)
     |> Enum.reject(fn n ->
-      # Exclude calls that are the last expression in a clause (they ARE the return value)
-      is_return_value?(n, nodes)
+      return_value?(n, nodes)
     end)
     |> Enum.take(20)
     |> Enum.map(fn n ->
       %{
         kind: :unused_result,
         message: "#{call_name(n)} result is unused",
-        location: Reach.CLI.Format.location(n)
+        location: Format.location(n)
       }
     end)
   end
@@ -269,13 +286,12 @@ defmodule Mix.Tasks.Reach.Smell do
       (is_atom(node.meta[:module]) and to_string(node.meta[:module]) =~ "Reach.CLI")
   end
 
-  defp is_return_value?(node, all_nodes) do
-    # Check if this call is the last child of a clause (return value)
+  defp return_value?(node, all_nodes) do
     all_nodes
     |> Enum.filter(&(&1.type == :clause))
     |> Enum.any?(fn clause ->
       List.last(clause.children) == node or
-        (clause.children |> List.last() |> children_contain?(node))
+        clause.children |> List.last() |> children_contain?(node)
     end)
   end
 
@@ -296,7 +312,7 @@ defmodule Mix.Tasks.Reach.Smell do
     Enum.flat_map(func_defs, fn func ->
       calls =
         func
-        |> Reach.IR.all_nodes()
+        |> IR.all_nodes()
         |> Enum.filter(fn n ->
           n.type == :call and n.meta[:module] in [Enum, List] and
             n.source_span != nil
@@ -309,18 +325,24 @@ defmodule Mix.Tasks.Reach.Smell do
         [first, second] ->
           cond do
             first.meta[:function] == :map and second.meta[:function] == :first ->
-              [%{
-                kind: :eager_pattern,
-                message: "Enum.map → List.first: builds entire list for one element. Use Enum.find_value/2",
-                location: Reach.CLI.Format.location(second)
-              }]
+              [
+                %{
+                  kind: :eager_pattern,
+                  message:
+                    "Enum.map → List.first: builds entire list for one element. Use Enum.find_value/2",
+                  location: Format.location(second)
+                }
+              ]
 
             first.meta[:function] == :sort and second.meta[:function] == :take ->
-              [%{
-                kind: :eager_pattern,
-                message: "Enum.sort → Enum.take(#{take_count(second)}): sorts entire list. Consider partial sort",
-                location: Reach.CLI.Format.location(second)
-              }]
+              [
+                %{
+                  kind: :eager_pattern,
+                  message:
+                    "Enum.sort → Enum.take(#{take_count(second)}): sorts entire list. Consider partial sort",
+                  location: Format.location(second)
+                }
+              ]
 
             true ->
               []
@@ -342,7 +364,7 @@ defmodule Mix.Tasks.Reach.Smell do
   # --- Rendering ---
 
   defp render_text(findings) do
-    IO.puts(Reach.CLI.Format.header("Cross-Function Smell Detection"))
+    IO.puts(Format.header("Cross-Function Smell Detection"))
 
     if findings == [] do
       IO.puts("No issues found.\n")
@@ -362,7 +384,8 @@ defmodule Mix.Tasks.Reach.Smell do
   defp render_group([], _title), do: nil
 
   defp render_group(findings, title) do
-    IO.puts(Reach.CLI.Format.section(title))
+    IO.puts(Format.section(title))
+
     Enum.each(findings, fn f ->
       IO.puts("  #{f.location}")
       IO.puts("    #{f.message}")
