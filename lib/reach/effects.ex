@@ -233,6 +233,7 @@ defmodule Reach.Effects do
     end
   end
 
+  # Process-local cache — assumes no hot code reloads (CLI tool, not a server)
   defp classify_call(module, function, arity) do
     key = {module, function, arity}
 
