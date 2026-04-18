@@ -21,7 +21,7 @@ defmodule Mix.Tasks.Reach.Modules do
 
   @shortdoc "List all modules with functions and metrics"
 
-  @switches [format: :string, sort: :string]
+  @switches [format: :string, sort: :string, graph: :boolean]
   @aliases [f: :format]
 
   @impl Mix.Task
@@ -34,19 +34,23 @@ defmodule Mix.Tasks.Reach.Modules do
     modules = analyze_modules(project)
     modules = modules |> Enum.reject(&(&1.total_functions == 0)) |> sort_modules(sort)
 
-    case format do
-      "json" ->
-        Format.render(%{modules: modules}, "reach.modules", format: "json", pretty: true)
+    if opts[:graph] and Reach.CLI.BoxartGraph.available?() do
+      Reach.CLI.BoxartGraph.render_module_graph(project)
+    else
+      case format do
+        "json" ->
+          Format.render(%{modules: modules}, "reach.modules", format: "json", pretty: true)
 
-      "oneline" ->
-        Enum.each(modules, fn m ->
-          IO.puts(
-            "#{m.name} #{m.public_count} public #{m.private_count} private complexity=#{m.total_complexity}"
-          )
-        end)
+        "oneline" ->
+          Enum.each(modules, fn m ->
+            IO.puts(
+              "#{m.name} #{m.public_count} public #{m.private_count} private complexity=#{m.total_complexity}"
+            )
+          end)
 
-      _ ->
-        render_text(modules)
+        _ ->
+          render_text(modules)
+      end
     end
   end
 

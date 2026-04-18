@@ -72,6 +72,169 @@ defmodule Reach.CLI.BoxartGraph do
     IO.puts(render_boxart(graph))
   end
 
+  def render_caller_graph(project, target, depth) do
+    cg = project.call_graph
+    variants = Reach.CLI.Project.all_variants(cg, target)
+
+    # Collect callers by traversing in-neighbors (reverse direction)
+    callers = collect_callers(cg, variants, depth)
+    root_label = Format.func_id_to_string(target)
+
+    graph = Graph.new() |> Graph.add_vertex(:root, label: root_label, shape: :stadium)
+
+    graph =
+      Enum.reduce(callers, graph, fn {caller, caller_depth}, g ->
+        label = Format.func_id_to_string(caller)
+        g = Graph.add_vertex(g, caller, label: label)
+
+        if caller_depth == 1 do
+          Graph.add_edge(g, :root, caller)
+        else
+          g
+        end
+      end)
+
+    IO.puts(apply(Boxart.Render.Mindmap, :render, [graph, []]))
+  end
+
+  defp collect_callers(cg, variants, depth) do
+    collect_callers(cg, variants, depth, 1, MapSet.new(variants), [])
+  end
+
+  defp collect_callers(_cg, _frontier, max_depth, current, _visited, acc)
+       when current > max_depth,
+       do: acc
+
+  defp collect_callers(cg, frontier, max_depth, current, visited, acc) do
+    new_callers =
+      frontier
+      |> Enum.flat_map(fn v ->
+        if Graph.has_vertex?(cg, v) do
+          Graph.in_neighbors(cg, v) |> Enum.filter(&Reach.CLI.Project.mfa?/1)
+        else
+          []
+        end
+      end)
+      |> Enum.reject(&MapSet.member?(visited, &1))
+      |> Enum.uniq()
+
+    new_acc = acc ++ Enum.map(new_callers, &{&1, current})
+    new_visited = Enum.reduce(new_callers, visited, &MapSet.put(&2, &1))
+
+    collect_callers(cg, new_callers, max_depth, current + 1, new_visited, new_acc)
+  end
+
+  def render_module_graph(project) do
+    nodes = Map.values(project.nodes)
+
+    # Group function_defs by file → module
+    modules =
+      nodes
+      |> Enum.filter(&(&1.type == :module_def))
+      |> Enum.uniq_by(& &1.meta[:name])
+
+    # Only show edges between modules defined in this project
+    internal = MapSet.new(modules, & &1.meta[:name])
+
+    module_edges =
+      Enum.flat_map(modules, fn mod ->
+        mod_name = mod.meta[:name]
+
+        mod
+        |> Reach.IR.all_nodes()
+        |> Enum.filter(
+          &(&1.type == :call and &1.meta[:kind] == :remote and &1.meta[:module] != nil)
+        )
+        |> Enum.flat_map(fn call ->
+          target = call.meta[:module]
+
+          if target != mod_name and MapSet.member?(internal, target) do
+            [{mod_name, target}]
+          else
+            []
+          end
+        end)
+      end)
+      |> Enum.uniq()
+
+    if module_edges == [] do
+      IO.puts("  (no cross-module dependencies found)")
+    else
+      used_modules =
+        module_edges
+        |> Enum.flat_map(fn {from, to} -> [from, to] end)
+        |> Enum.uniq()
+
+      graph =
+        Enum.reduce(used_modules, Graph.new(), fn mod, g ->
+          Graph.add_vertex(g, mod, label: inspect(mod))
+        end)
+
+      graph =
+        Enum.reduce(module_edges, graph, fn {from, to}, g ->
+          Graph.add_edge(g, from, to)
+        end)
+
+      IO.puts(render_boxart(graph))
+    end
+  end
+
+  def render_slice_graph(project, node_id, forward?) do
+    graph = project.graph
+
+    slice_ids =
+      if Graph.has_vertex?(graph, node_id) do
+        if forward? do
+          Graph.reachable(graph, [node_id])
+        else
+          Graph.reaching(graph, [node_id])
+        end
+      else
+        []
+      end
+
+    slice_nodes =
+      slice_ids
+      |> Enum.map(&Map.get(project.nodes, &1))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.filter(& &1.source_span)
+      |> Enum.take(20)
+
+    viz_graph =
+      Enum.reduce(slice_nodes, Graph.new(), fn n, g ->
+        label = slice_node_label(n)
+        loc = n.source_span && "#{Path.basename(n.source_span.file)}:#{n.source_span.start_line}"
+        Graph.add_vertex(g, n.id, label: "#{loc}\n#{label}")
+      end)
+
+    # Add edges from the project graph between slice nodes
+    slice_id_set = MapSet.new(slice_nodes, & &1.id)
+
+    viz_graph =
+      slice_ids
+      |> Enum.flat_map(fn id ->
+        if Graph.has_vertex?(graph, id) do
+          Graph.out_edges(graph, id)
+          |> Enum.filter(&MapSet.member?(slice_id_set, &1.v2))
+          |> Enum.map(&{&1.v1, &1.v2})
+        else
+          []
+        end
+      end)
+      |> Enum.uniq()
+      |> Enum.reduce(viz_graph, fn {from, to}, g -> Graph.add_edge(g, from, to) end)
+
+    IO.puts(render_boxart(viz_graph))
+  end
+
+  defp slice_node_label(%{type: :call, meta: %{module: m, function: f}}) when m != nil,
+    do: "#{inspect(m)}.#{f}"
+
+  defp slice_node_label(%{type: :call, meta: %{function: f}}), do: to_string(f)
+  defp slice_node_label(%{type: :var, meta: %{name: n}}), do: to_string(n)
+  defp slice_node_label(%{type: :match}), do: "="
+  defp slice_node_label(%{type: t}), do: to_string(t)
+
   defp render_boxart(graph) do
     opts = [direction: :td, theme: :default, max_width: term_width()]
     apply(Boxart, :render, [graph, opts])

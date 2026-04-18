@@ -16,7 +16,7 @@ defmodule Mix.Tasks.Reach.Impact do
 
   @shortdoc "Show change impact analysis for a function"
 
-  @switches [format: :string, depth: :integer]
+  @switches [format: :string, depth: :integer, graph: :boolean]
   @aliases [f: :format]
 
   alias Reach.CLI.Format
@@ -42,10 +42,14 @@ defmodule Mix.Tasks.Reach.Impact do
     depth = opts[:depth] || 4
     result = analyze(project, target, depth)
 
-    case format do
-      "json" -> Format.render(result, "reach.impact", format: "json", pretty: true)
-      "oneline" -> render_oneline(result)
-      _ -> render_text(project, result)
+    if opts[:graph] and Reach.CLI.BoxartGraph.available?() do
+      Reach.CLI.BoxartGraph.render_caller_graph(project, target, depth)
+    else
+      case format do
+        "json" -> Format.render(result, "reach.impact", format: "json", pretty: true)
+        "oneline" -> render_oneline(result)
+        _ -> render_text(project, result)
+      end
     end
   end
 

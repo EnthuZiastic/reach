@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Reach.Slice do
 
   @shortdoc "Program slicing — minimum code affecting a value"
 
-  @switches [format: :string, forward: :boolean, variable: :string]
+  @switches [format: :string, forward: :boolean, variable: :string, graph: :boolean]
   @aliases [f: :format]
 
   alias Reach.CLI.Format
@@ -51,7 +51,12 @@ defmodule Mix.Tasks.Reach.Slice do
 
     slice_ids = compute_slice(project.graph, node.id, forward?)
     result = filter_and_format(project, slice_ids, var_name)
-    render(format, node, result, forward?, target)
+
+    if opts[:graph] and Reach.CLI.BoxartGraph.available?() do
+      Reach.CLI.BoxartGraph.render_slice_graph(project, node.id, forward?)
+    else
+      render(format, node, result, forward?, target)
+    end
   end
 
   defp compute_slice(graph, node_id, forward?) do
