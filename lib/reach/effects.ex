@@ -313,6 +313,7 @@ defmodule Reach.Effects do
     Mix.Project,
     Mix,
     Agent,
+    Node,
     Task,
     DynamicSupervisor,
     Registry,
