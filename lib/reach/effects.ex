@@ -249,6 +249,7 @@ defmodule Reach.Effects do
     Port,
     :erlang,
     :code,
+    :ets,
     :os,
     :file,
     :gen_server,
@@ -426,7 +427,22 @@ defmodule Reach.Effects do
   defp receive_function?(_, _), do: false
 
   defp ets_write?(:ets, f)
-       when f in [:insert, :insert_new, :delete, :delete_object, :update_counter, :update_element],
+       when f in [
+              :new,
+              :insert,
+              :insert_new,
+              :delete,
+              :delete_all,
+              :delete_object,
+              :update_counter,
+              :update_element,
+              :match_delete,
+              :select_delete,
+              :rename,
+              :give_away,
+              :setopts,
+              :safe_fixtable
+            ],
        do: true
 
   defp ets_write?(_, _), do: false

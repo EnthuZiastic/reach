@@ -826,8 +826,12 @@ defmodule Reach do
 
   defp collect_impure_ids(all_nodes) do
     all_nodes
-    |> Enum.reject(&pure?/1)
-    |> Enum.flat_map(fn node -> [node.id | Enum.map(node.children, & &1.id)] end)
+    |> Enum.filter(fn node ->
+      node.type == :call and not pure?(node)
+    end)
+    |> Enum.flat_map(fn node ->
+      Reach.IR.all_nodes(node) |> Enum.map(& &1.id)
+    end)
     |> MapSet.new()
   end
 
