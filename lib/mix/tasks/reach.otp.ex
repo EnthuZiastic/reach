@@ -427,9 +427,7 @@ defmodule Mix.Tasks.Reach.Otp do
       IO.puts(Format.section("Potentially unmatched messages"))
 
       Enum.each(handlers, fn h ->
-        IO.puts(
-          "  #{h.location}  #{Format.yellow("#{h.message} to unknown handler")} #{Format.tag(:warning)}"
-        )
+        IO.puts("  #{h.location}  #{Format.warning("#{h.message} to unknown handler")}")
       end)
     end
   end

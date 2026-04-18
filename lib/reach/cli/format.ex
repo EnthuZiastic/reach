@@ -167,6 +167,10 @@ defmodule Reach.CLI.Format do
   def tag(:ok), do: green("✓")
   def tag(:info), do: cyan("ℹ")
 
+  def warning(text), do: yellow(text) <> " " <> tag(:warning)
+  def count(n), do: bright(to_string(n))
+  def summary(text), do: faint(text)
+
   defp maybe_add(map, _key, nil), do: map
   defp maybe_add(map, key, val), do: Map.put(map, key, jsonify(val))
 end

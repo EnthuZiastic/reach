@@ -128,6 +128,6 @@ defmodule Mix.Tasks.Reach.DeadCode do
       end)
     end)
 
-    IO.puts("\n#{Format.bright(to_string(length(findings)))} finding(s)\n")
+    IO.puts("\n#{Format.count(length(findings))} finding(s)\n")
   end
 end
