@@ -234,6 +234,20 @@ defmodule Reach.Effects do
   end
 
   defp classify_call(module, function, arity) do
+    key = {module, function, arity}
+
+    case Process.get({:reach_classify, key}) do
+      nil ->
+        result = do_classify_call(module, function, arity)
+        Process.put({:reach_classify, key}, result)
+        result
+
+      result ->
+        result
+    end
+  end
+
+  defp do_classify_call(module, function, arity) do
     classify_pure(module, function, arity) ||
       classify_io(module, function) ||
       classify_messaging(module, function) ||
