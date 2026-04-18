@@ -329,20 +329,27 @@ defmodule Reach.Visualize do
   end
 
   defp build_def_line_map(file) do
-    if String.ends_with?(file, ".gleam") do
-      build_gleam_def_map(file)
-    else
-      with {:ok, source} <- File.read(file),
-           {:ok, ast} <-
-             Code.string_to_quoted(source,
-               columns: true,
-               token_metadata: true,
-               file: file
-             ) do
-        collect_def_ranges(ast)
-      else
-        _ -> %{}
-      end
+    cond do
+      String.ends_with?(file, ".gleam") ->
+        build_gleam_def_map(file)
+
+      String.ends_with?(file, ".beam") or
+          not String.ends_with?(file, [".ex", ".exs", ".erl", ".hrl"]) ->
+        %{}
+
+      true ->
+        with {:ok, source} <- File.read(file),
+             true <- String.valid?(source),
+             {:ok, ast} <-
+               Code.string_to_quoted(source,
+                 columns: true,
+                 token_metadata: true,
+                 file: file
+               ) do
+          collect_def_ranges(ast)
+        else
+          _ -> %{}
+        end
     end
   end
 

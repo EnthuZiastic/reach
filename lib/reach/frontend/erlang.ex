@@ -653,7 +653,15 @@ defmodule Reach.Frontend.Erlang do
     translate_expr(expr, counter, file)
   end
 
-  defp erl_span(line, file) do
-    %{file: to_string(file), start_line: line, start_col: 1, end_line: nil, end_col: nil}
+  defp erl_span(anno, file) do
+    line = normalize_line(:erl_anno.line(anno))
+    col = normalize_col(:erl_anno.column(anno))
+    %{file: to_string(file), start_line: line, start_col: col, end_line: nil, end_col: nil}
   end
+
+  defp normalize_line(l) when is_integer(l) and l > 0, do: l
+  defp normalize_line(_), do: nil
+
+  defp normalize_col(c) when is_integer(c) and c > 0, do: c
+  defp normalize_col(_), do: nil
 end

@@ -48,18 +48,21 @@ defmodule Reach.Visualize.Helpers do
   end
 
   def cached_file_lines(file) do
+    if source_file?(file), do: do_cached_file_lines(file)
+  end
+
+  defp do_cached_file_lines(file) do
     cache_key = {:reach_file_lines, file}
 
     case Process.get(cache_key) do
       nil ->
-        case File.read(file) do
-          {:ok, content} ->
-            lines = String.split(content, "\n")
-            Process.put(cache_key, lines)
-            lines
-
-          _ ->
-            nil
+        with {:ok, content} <- File.read(file),
+             true <- String.valid?(content) do
+          lines = String.split(content, "\n")
+          Process.put(cache_key, lines)
+          lines
+        else
+          _ -> nil
         end
 
       lines ->
@@ -243,5 +246,12 @@ defmodule Reach.Visualize.Helpers do
       nil -> nil
       lines -> length(lines)
     end
+  end
+
+  defp source_file?(nil), do: false
+
+  defp source_file?(file) do
+    ext = Path.extname(file)
+    ext in [".ex", ".exs", ".erl", ".hrl", ".gleam"]
   end
 end
