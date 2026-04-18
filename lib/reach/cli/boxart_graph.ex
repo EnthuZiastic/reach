@@ -215,7 +215,9 @@ defmodule Reach.CLI.BoxartGraph do
       |> Enum.flat_map(fn id ->
         if Graph.has_vertex?(graph, id) do
           Graph.out_edges(graph, id)
-          |> Enum.filter(&MapSet.member?(slice_id_set, &1.v2))
+          |> Enum.filter(
+            &(MapSet.member?(slice_id_set, &1.v1) and MapSet.member?(slice_id_set, &1.v2))
+          )
           |> Enum.map(&{&1.v1, &1.v2})
         else
           []
@@ -267,6 +269,7 @@ defmodule Reach.CLI.BoxartGraph do
       lines ->
         lines
         |> Enum.slice((start_line - 1)..(end_line - 1)//1)
+        |> Reach.Visualize.Helpers.dedent()
         |> Enum.join("\n")
         |> String.trim()
         |> case do
