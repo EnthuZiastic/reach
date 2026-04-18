@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **8 mix tasks for code analysis** — agent-oriented CLI tools that expose
+  Reach's graph analysis as structured text/JSON output:
+  - `mix reach.modules` — bird's-eye codebase inventory sorted by
+    name/functions/complexity, with OTP/LiveView behaviour detection
+  - `mix reach.dead_code` — find unused pure expressions (parallel per-file)
+  - `mix reach.deps` — direct callers, callee tree, shared state writers
+  - `mix reach.impact` — transitive callers, return value dependents, risk
+  - `mix reach.flow` — taint analysis (`--from`/`--to`) and variable tracing
+  - `mix reach.slice` — backward/forward program slicing by file:line
+  - `mix reach.otp` — GenServer state machines, ETS/process dictionary
+    coupling, missing message handlers, supervision tree
+  - `mix reach.smell` — cross-function performance anti-patterns (redundant
+    traversals, duplicate computations, eager patterns)
+  - All tools support `--format text` (colored), `json`, and `oneline`
+- **Dynamic dispatch in Elixir frontend** — `handler.(args)` and `fun.(args)`
+  now emit `:call` nodes with `kind: :dynamic` (closes #4)
+- **ANSI color output** — headers cyan, function names bright, file paths
+  faint, complexity colored by severity, OTP state actions colored by type.
+  Auto-disabled when piped.
+
+### Fixed
+
+- **BEAM frontend source_span normalization** — `:erl_anno` annotations
+  (integer, `{line, col}` tuple, keyword list, or nil) now normalized via
+  `:erl_anno.line/1` and `:erl_anno.column/1`. `start_line` is always integer
+  or nil. Column info extracted from `{line, col}` tuples (closes #5).
+- **Visualization crash on BEAM modules** — `build_def_line_map` and
+  `cached_file_lines` now skip non-source files and validate UTF-8.
+- **dead_code false positives reduced 91%** (628 → 58 on Phoenix) —
+  fixed-point alive expansion for intermediate variables, branch-tail return
+  tracing through case/cond/try/fn, guard exclusion, comprehension
+  generator/filter exclusion, cond condition exclusion, `<>` pattern
+  recognition, impure module blocklist (`Process`, `:code`, `:ets`, `Node`,
+  `System`, etc.), typespec exclusion, impure call descendant marking.
+- **reach.smell false positives** — structural pipe check instead of
+  transitive graph reachability, per-clause redundant computation grouping,
+  full argument comparison (vars + literals), type-check function exclusion,
+  function reference filtering, callback purity check for map→map fusion.
+- **reach.otp state detection** — finds struct field access (`state.field`),
+  unwraps `%State{} = state` patterns, detects ETS writes through state
+  parameter. No longer flags `Map.merge` on non-state variables.
+- **reach.deps** shows only direct callers (transitive analysis in
+  reach.impact).
+- **Block quality** — `compute_vertex_ranges` uses `min_line_in_subtree` to
+  include multi-line pattern children.
+
+### Improved
+
+- **Performance** — effect classification cached in ETS (shared across
+  parallel tasks), SDG construction parallelized across modules.
+  Livebook analysis: 9.7s → 3.5s.
+- **Consistent CLI output** — `(none found)` everywhere, descriptive match
+  descriptions (`name = Module.func is unused`), empty slice suggests
+  `--forward`, zero-function modules filtered from reach.modules.
+
 ## 1.2.0
 
 ### New
