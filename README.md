@@ -76,6 +76,58 @@ Requires optional deps:
 {:makeup_elixir, "~> 1.0"}
 ```
 
+
+## CLI tools
+
+Eight mix tasks for code analysis. All support `--format text` (default,
+colored), `json`, and `oneline`.
+
+### Codebase overview
+
+```bash
+# Module inventory sorted by complexity
+mix reach.modules --sort complexity
+
+# Dead code detection
+mix reach.dead_code
+```
+
+### Function analysis
+
+```bash
+# What calls this and what does it call?
+mix reach.deps MyApp.Accounts.register/2
+
+# What breaks if I change this function?
+mix reach.impact MyApp.Accounts.register/2
+```
+
+### Data flow
+
+```bash
+# Does user input reach the database?
+mix reach.flow --from conn.params --to Repo
+
+# Where is this variable defined and used?
+mix reach.flow --variable user
+
+# What code affects this line?
+mix reach.slice lib/my_app/accounts.ex:45
+
+# Where does this value flow to?
+mix reach.slice --forward lib/my_app/accounts.ex:45
+```
+
+### OTP and performance
+
+```bash
+# GenServer state machines, ETS coupling, missing handlers
+mix reach.otp
+
+# Cross-function redundant computations, suboptimal Enum patterns
+mix reach.smell
+```
+
 ## Core workflows
 
 ### Slicing
