@@ -439,11 +439,11 @@ defmodule Mix.Tasks.Reach.Otp do
     end
   end
 
-  defp action_label(:writes), do: "writes state"
-  defp action_label(:read_write), do: "read+write"
-  defp action_label(:reads), do: "reads state"
-  defp action_label(:passes_through), do: "passes through"
-  defp action_label(:unknown), do: "no state access"
+  defp action_label(:writes), do: Format.red("writes state")
+  defp action_label(:read_write), do: Format.yellow("read+write")
+  defp action_label(:reads), do: Format.green("reads state")
+  defp action_label(:passes_through), do: Format.faint("passes through")
+  defp action_label(:unknown), do: Format.faint("no state access")
 
   defp render_oneline(result) do
     Enum.each(result.behaviours, fn gs ->

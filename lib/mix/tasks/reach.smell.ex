@@ -423,7 +423,7 @@ defmodule Mix.Tasks.Reach.Smell do
 
     Enum.each(findings, fn f ->
       IO.puts("  #{f.location}")
-      IO.puts("    #{f.message}")
+      IO.puts("    #{Format.yellow(f.message)}")
     end)
   end
 end

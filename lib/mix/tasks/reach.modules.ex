@@ -173,6 +173,10 @@ defmodule Mix.Tasks.Reach.Modules do
 
   defp sort_modules(modules, _), do: Enum.sort_by(modules, & &1.name)
 
+  defp complexity_color(c) when c > 200, do: Format.red(to_string(c))
+  defp complexity_color(c) when c > 50, do: Format.yellow(to_string(c))
+  defp complexity_color(c), do: to_string(c)
+
   defp render_text(modules) do
     IO.puts(Format.header("Modules (#{length(modules)})"))
 
@@ -184,18 +188,18 @@ defmodule Mix.Tasks.Reach.Modules do
           _ -> ""
         end
 
-      IO.puts("  #{m.name}#{behaviours}")
+      IO.puts("  #{Format.bright(m.name)}#{Format.cyan(behaviours)}")
 
       IO.puts(
-        "    #{m.public_count} public, #{m.private_count} private, complexity #{m.total_complexity}"
+        "    #{m.public_count} public, #{m.private_count} private, complexity #{complexity_color(m.total_complexity)}"
       )
 
       if m.biggest_function do
-        IO.puts("    biggest: #{m.biggest_function}")
+        IO.puts("    biggest: #{Format.yellow(m.biggest_function)}")
       end
 
       if m.file do
-        IO.puts("    #{m.file}")
+        IO.puts("    #{Format.faint(m.file)}")
       end
 
       IO.puts("")

@@ -119,13 +119,13 @@ defmodule Mix.Tasks.Reach.DeadCode do
     |> Enum.group_by(& &1.file)
     |> Enum.sort_by(fn {file, _} -> file end)
     |> Enum.each(fn {file, file_findings} ->
-      IO.puts(Format.section(file))
+      IO.puts(Format.section(Format.faint(file)))
 
       Enum.each(file_findings, fn f ->
-        IO.puts("  line #{f.line}: #{f.description}")
+        IO.puts("  line #{Format.yellow(to_string(f.line))}: #{f.description}")
       end)
     end)
 
-    IO.puts("\n#{length(findings)} finding(s)\n")
+    IO.puts("\n#{Format.bright(to_string(length(findings)))} finding(s)\n")
   end
 end
