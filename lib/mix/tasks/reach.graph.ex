@@ -28,7 +28,7 @@ defmodule Mix.Tasks.Reach.Graph do
   @impl Mix.Task
   def run(args) do
     unless BoxartGraph.available?() do
-      Mix.raise("boxart is required. Add {:boxart, \"~> 0.1\"} to your deps.")
+      Mix.raise("boxart is required. Add {:boxart, \"~> 0.3\"} to your deps.")
     end
 
     {opts, target_args, _} = OptionParser.parse(args, switches: @switches)
@@ -70,12 +70,13 @@ defmodule Mix.Tasks.Reach.Graph do
     end
   end
 
-  defp render_cfg_from_mfa(project, {_mod, fun, arity}) do
+  defp render_cfg_from_mfa(project, {mod, fun, arity}) do
     nodes = Map.values(project.nodes)
 
     func_node =
       Enum.find(nodes, fn n ->
-        n.type == :function_def and n.meta[:name] == fun and n.meta[:arity] == arity
+        n.type == :function_def and n.meta[:name] == fun and n.meta[:arity] == arity and
+          (mod == nil or n.meta[:module] == nil or n.meta[:module] == mod)
       end)
 
     unless func_node do
@@ -84,7 +85,12 @@ defmodule Mix.Tasks.Reach.Graph do
 
     file = func_node.source_span && func_node.source_span.file
     IO.puts(Format.header("#{fun}/#{arity}"))
-    BoxartGraph.render_cfg(func_node, file)
+
+    if file do
+      BoxartGraph.render_cfg(func_node, file)
+    else
+      IO.puts("  (no source file available)")
+    end
   end
 
   defp render_cfg_from_location(project, file, line) do

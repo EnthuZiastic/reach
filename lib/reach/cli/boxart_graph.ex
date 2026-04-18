@@ -39,6 +39,8 @@ defmodule Reach.CLI.BoxartGraph do
         Graph.add_vertex(g, {name, arity}, label: label, shape: :rounded)
       end)
 
+    # Show init → other callbacks to indicate lifecycle order.
+    # Not actual state transitions — just "these callbacks exist".
     init = Enum.find(callbacks, fn %{callback: {name, _}} -> name == :init end)
 
     graph =
@@ -50,7 +52,7 @@ defmodule Reach.CLI.BoxartGraph do
         graph
       end
 
-    IO.puts(Boxart.render(graph, direction: :td, theme: :default, max_width: term_width()))
+    IO.puts(render_boxart(graph))
   end
 
   def render_cfg(func_node, file) do
@@ -67,7 +69,12 @@ defmodule Reach.CLI.BoxartGraph do
         Graph.add_edge(g, edge.source, edge.target, opts)
       end)
 
-    IO.puts(Boxart.render(graph, direction: :td, theme: :default, max_width: term_width()))
+    IO.puts(render_boxart(graph))
+  end
+
+  defp render_boxart(graph) do
+    opts = [direction: :td, theme: :default, max_width: term_width()]
+    apply(Boxart, :render, [graph, opts])
   end
 
   # ── Private ──
