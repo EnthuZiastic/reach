@@ -79,9 +79,8 @@ defmodule Reach.CLI.BoxartGraph do
 
     graph =
       Enum.reduce([:entry | vertices] ++ [:exit], graph, fn v, g ->
-        label = vertex_label(v, node_map, file)
-        style = vertex_style(v)
-        Graph.add_vertex(g, v, [{:label, label} | style])
+        attrs = vertex_attrs(v, node_map, file)
+        Graph.add_vertex(g, v, attrs)
       end)
 
     graph =
@@ -126,33 +125,54 @@ defmodule Reach.CLI.BoxartGraph do
     collect_subgraph(cg, new_frontier, depth - 1, new_visited, new_edges)
   end
 
-  defp vertex_label(:entry, _node_map, _file), do: "entry"
-  defp vertex_label(:exit, _node_map, _file), do: "exit"
+  defp vertex_attrs(:entry, _node_map, _file), do: [label: "entry", shape: :stadium]
+  defp vertex_attrs(:exit, _node_map, _file), do: [label: "exit", shape: :stadium]
 
-  defp vertex_label(v, node_map, file) when is_integer(v) do
+  defp vertex_attrs(v, node_map, file) when is_integer(v) do
     case Map.get(node_map, v) do
       nil ->
-        inspect(v)
+        [label: inspect(v)]
 
       node ->
         line = node.source_span && node.source_span.start_line
 
         if line && file do
-          case Reach.Visualize.Helpers.read_line(file, line) do
-            nil -> ir_label(node)
-            text -> String.trim(text)
+          source = read_source_block(file, node)
+
+          if source do
+            [source: source, start_line: line, language: :elixir]
+          else
+            [label: ir_label(node)]
           end
         else
-          ir_label(node)
+          [label: ir_label(node)]
         end
     end
   end
 
-  defp vertex_label(v, _node_map, _file), do: inspect(v)
+  defp vertex_attrs(v, _node_map, _file), do: [label: inspect(v)]
 
-  defp vertex_style(:entry), do: [shape: :stadium]
-  defp vertex_style(:exit), do: [shape: :stadium]
-  defp vertex_style(_), do: []
+  defp read_source_block(file, node) do
+    start_line = node.source_span && node.source_span.start_line
+    end_line = node.source_span && node.source_span[:end_line]
+
+    if start_line do
+      lines = Reach.Visualize.Helpers.cached_file_lines(file)
+
+      if lines do
+        last = end_line || start_line
+
+        lines
+        |> Enum.slice((start_line - 1)..min(last - 1, start_line + 3))
+        |> Enum.join("\n")
+        |> String.trim()
+        |> case do
+          "" -> nil
+          s -> s
+        end
+      end
+    end
+  end
 
   defp edge_label(:sequential), do: nil
   defp edge_label(:true_branch), do: "true"
