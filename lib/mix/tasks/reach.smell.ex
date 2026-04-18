@@ -76,24 +76,24 @@ defmodule Mix.Tasks.Reach.Smell do
         end)
         |> Enum.sort_by(fn n -> {n.source_span[:start_line], n.source_span[:start_col] || 0} end)
 
-      find_pipeline_patterns(calls, project.graph)
+      find_pipeline_patterns(calls)
     end)
   end
 
-  defp find_pipeline_patterns(calls, graph) do
+  defp find_pipeline_patterns(calls) do
     calls
     |> Enum.chunk_every(2, 1, [])
     |> Enum.flat_map(fn
       [first, second] ->
-        check_pair(first, second, graph)
+        check_pair(first, second)
 
       _ ->
         []
     end)
   end
 
-  defp check_pair(first, second, graph) do
-    if data_connected?(first, second, graph) do
+  defp check_pair(first, second) do
+    if data_connected?(first, second) do
       detect_pattern(first, second)
     else
       []
@@ -156,7 +156,7 @@ defmodule Mix.Tasks.Reach.Smell do
     }
   end
 
-  defp data_connected?(first, second, _graph) do
+  defp data_connected?(first, second) do
     # Check structural connection: in a pipe like `a |> b`, `a` becomes
     # the first child of `b` (via desugaring). For nested calls like
     # `b(a(...))`, `a` is also a child. We check if the first call is

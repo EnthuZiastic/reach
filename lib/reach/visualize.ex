@@ -3,6 +3,7 @@ defmodule Reach.Visualize do
 
   alias Reach.Frontend.Gleam
   alias Reach.Visualize.ControlFlow
+  alias Reach.Visualize.Helpers
 
   # ── Public API ──
 
@@ -333,7 +334,7 @@ defmodule Reach.Visualize do
       String.ends_with?(file, ".gleam") ->
         build_gleam_def_map(file)
 
-      not source_file?(file) ->
+      not Helpers.source_file?(file) ->
         %{}
 
       true ->
@@ -380,9 +381,6 @@ defmodule Reach.Visualize do
       {:error, :glance_not_available}
     end
   end
-
-  @source_extensions [".ex", ".exs", ".erl", ".hrl", ".gleam"]
-  defp source_file?(file), do: String.ends_with?(file, @source_extensions)
 
   defp collect_def_ranges(ast) do
     {_, ranges} =

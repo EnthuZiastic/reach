@@ -250,6 +250,6 @@ defmodule Reach.Visualize.Helpers do
 
   @source_extensions [".ex", ".exs", ".erl", ".hrl", ".gleam"]
 
-  defp source_file?(nil), do: false
-  defp source_file?(file), do: Path.extname(file) in @source_extensions
+  def source_file?(nil), do: false
+  def source_file?(file), do: Path.extname(file) in @source_extensions
 end
