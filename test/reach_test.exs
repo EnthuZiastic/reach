@@ -523,6 +523,53 @@ defmodule ReachTest do
       dead = Reach.dead_code(graph)
       assert Enum.any?(dead, &(&1.meta[:function] == :upcase))
     end
+
+    test "guard calls are not flagged as dead" do
+      graph =
+        Reach.string_to_graph!("""
+        def validate(x) when is_binary(x), do: {:ok, x}
+        def validate(x) when is_integer(x), do: {:ok, x}
+        def validate(_), do: :error
+        """)
+
+      dead = Reach.dead_code(graph)
+      guard_fns = Enum.filter(dead, &(&1.meta[:function] in [:is_binary, :is_integer]))
+      assert guard_fns == []
+    end
+
+    test "branch-tail return values are not flagged as dead" do
+      graph =
+        Reach.string_to_graph!("""
+        def process(input) do
+          if is_binary(input) do
+            String.upcase(input)
+          else
+            to_string(input)
+          end
+        end
+        """)
+
+      dead = Reach.dead_code(graph)
+      dead_fns = Enum.map(dead, & &1.meta[:function])
+      refute :upcase in dead_fns
+      refute :to_string in dead_fns
+    end
+
+    test "nested case/if tail returns are not flagged as dead" do
+      graph =
+        Reach.string_to_graph!("""
+        def classify(x) do
+          case x do
+            :a -> Atom.to_string(:a)
+            :b -> "b"
+          end
+        end
+        """)
+
+      dead = Reach.dead_code(graph)
+      dead_fns = Enum.map(dead, & &1.meta[:function])
+      refute :to_string in dead_fns
+    end
   end
 
   describe "higher-order function resolution" do

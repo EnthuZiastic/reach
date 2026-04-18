@@ -636,14 +636,23 @@ defmodule Reach do
   defp return_node_ids(graph) do
     nodes(graph, type: :clause)
     |> Enum.filter(&(&1.meta[:kind] == :function_clause))
-    |> Enum.map(fn clause ->
-      case List.last(clause.children) do
-        %{type: :block, children: children} -> List.last(children)
+    |> Enum.flat_map(&tail_expressions/1)
+    |> MapSet.new(& &1.id)
+  end
+
+  defp tail_expressions(node) do
+    last =
+      case node do
+        %{type: t, children: children} when t in [:block, :clause] -> List.last(children)
         other -> other
       end
-    end)
-    |> Enum.reject(&is_nil/1)
-    |> MapSet.new(& &1.id)
+
+    case last do
+      nil -> []
+      %{type: :case, children: [_ | clauses]} -> Enum.flat_map(clauses, &tail_expressions/1)
+      %{type: :try, children: children} -> Enum.flat_map(children, &tail_expressions/1)
+      leaf -> [leaf]
+    end
   end
 
   # --- Taint analysis ---
@@ -738,10 +747,22 @@ defmodule Reach do
 
   defp find_dead_nodes(all_nodes, alive_ids) do
     impure_ids = collect_impure_ids(all_nodes)
+    guard_ids = collect_guard_ids(all_nodes)
 
     all_nodes
     |> Enum.filter(&candidate_for_dead?/1)
-    |> Enum.reject(&(MapSet.member?(impure_ids, &1.id) or MapSet.member?(alive_ids, &1.id)))
+    |> Enum.reject(fn node ->
+      MapSet.member?(impure_ids, node.id) or
+        MapSet.member?(alive_ids, node.id) or
+        MapSet.member?(guard_ids, node.id)
+    end)
+  end
+
+  defp collect_guard_ids(all_nodes) do
+    all_nodes
+    |> Enum.filter(&(&1.type == :guard))
+    |> Enum.flat_map(&Reach.IR.all_nodes/1)
+    |> MapSet.new(& &1.id)
   end
 
   defp collect_impure_ids(all_nodes) do
