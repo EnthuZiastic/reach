@@ -91,6 +91,65 @@ defmodule ReachTest do
     end
   end
 
+  describe "dynamic dispatch" do
+    test "emits call nodes for handler.(args)" do
+      graph =
+        Reach.string_to_graph!("""
+        def run(handler, input) do
+          handler.(input)
+        end
+        """)
+
+      dynamic = Reach.nodes(graph, type: :call) |> Enum.filter(&(&1.meta[:kind] == :dynamic))
+      assert [call] = dynamic
+      assert call.meta[:arity] == 1
+    end
+
+    test "emits call nodes for local fn variable dispatch" do
+      graph =
+        Reach.string_to_graph!("""
+        def run(input) do
+          fun = fn x -> x + 1 end
+          fun.(input)
+        end
+        """)
+
+      dynamic = Reach.nodes(graph, type: :call) |> Enum.filter(&(&1.meta[:kind] == :dynamic))
+      assert [call] = dynamic
+      assert call.meta[:arity] == 1
+    end
+
+    test "dynamic call has callee as first child" do
+      graph =
+        Reach.string_to_graph!("""
+        def run(handler, x, y) do
+          handler.(x, y)
+        end
+        """)
+
+      [call] = Reach.nodes(graph, type: :call) |> Enum.filter(&(&1.meta[:kind] == :dynamic))
+      assert call.meta[:arity] == 2
+      assert [callee | args] = call.children
+      assert callee.type == :var
+      assert length(args) == 2
+    end
+
+    test "data flows through dynamic dispatch" do
+      graph =
+        Reach.string_to_graph!("""
+        def run(handler, input) do
+          handler.(input)
+        end
+        """)
+
+      [handler_param | _] =
+        Reach.nodes(graph, type: :var) |> Enum.filter(&(&1.meta[:name] == :handler))
+
+      [call] = Reach.nodes(graph, type: :call) |> Enum.filter(&(&1.meta[:kind] == :dynamic))
+      assert Reach.data_flows?(graph, handler_param.id, call.id)
+    end
+  end
+
   describe "node/2" do
     test "returns node by ID" do
       graph = Reach.string_to_graph!("def foo(x), do: x + 1")

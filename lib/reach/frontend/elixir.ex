@@ -698,6 +698,21 @@ defmodule Reach.Frontend.Elixir do
     }
   end
 
+  # Dynamic dispatch: handler.(args) / fun.(args)
+  defp translate({{:., meta, [callee]}, call_meta, args}, counter, file)
+       when is_list(args) do
+    callee_node = translate(callee, counter, file)
+    arg_nodes = Enum.map(args, &translate(&1, counter, file))
+
+    %Node{
+      id: Counter.next(counter),
+      type: :call,
+      meta: %{arity: length(args), kind: :dynamic},
+      children: [callee_node | arg_nodes],
+      source_span: span_from_meta(call_meta || meta, file)
+    }
+  end
+
   # Remote call: Module.function(args)
   defp translate({{:., meta, [module, fun_name]}, call_meta, args}, counter, file)
        when is_atom(fun_name) do
