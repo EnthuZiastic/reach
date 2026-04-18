@@ -385,14 +385,17 @@ defmodule Mix.Tasks.Reach.Otp do
   end
 
   defp render_behaviour(gs) do
-    IO.puts(Format.section("#{gs.module} (#{gs.behaviour})"))
+    IO.puts(Format.section("#{gs.module} #{Format.faint("(" <> gs.behaviour <> ")")}"))
     IO.puts("  Callbacks:")
 
     gs.state_transforms
     |> Enum.sort_by(fn t -> t.callback end)
     |> Enum.each(fn t ->
       {name, arity} = t.callback
-      IO.puts("    #{name}/#{arity}  #{action_label(t.action)}  #{t.location}")
+
+      IO.puts(
+        "    #{Format.bright("#{name}/#{arity}")}  #{action_label(t.action)}  #{t.location}"
+      )
     end)
   end
 
@@ -424,7 +427,9 @@ defmodule Mix.Tasks.Reach.Otp do
       IO.puts(Format.section("Potentially unmatched messages"))
 
       Enum.each(handlers, fn h ->
-        IO.puts("  #{h.location}  #{h.message} to unknown handler ⚠")
+        IO.puts(
+          "  #{h.location}  #{Format.yellow("#{h.message} to unknown handler")} #{Format.tag(:warning)}"
+        )
       end)
     end
   end

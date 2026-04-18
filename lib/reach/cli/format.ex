@@ -107,8 +107,11 @@ defmodule Reach.CLI.Format do
 
   def location(node) do
     case node.source_span do
-      %{file: f, start_line: l} -> faint("#{f}:#{l}")
-      _ -> "unknown"
+      %{file: f, start_line: l} ->
+        faint(f) <> ":" <> cyan(to_string(l))
+
+      _ ->
+        "unknown"
     end
   end
 
@@ -118,6 +121,16 @@ defmodule Reach.CLI.Format do
       _ -> "unknown"
     end
   end
+
+  def loc(file, line) when is_binary(file) and is_integer(line) do
+    faint(file) <> ":" <> cyan(to_string(line))
+  end
+
+  def loc(file, line) when is_binary(file) do
+    faint(file) <> ":" <> cyan(to_string(line))
+  end
+
+  def loc(raw, _), do: faint(to_string(raw))
 
   def func_id_to_string({mod, fun, arity}) when is_atom(mod) and mod != nil do
     bright("#{inspect(mod)}.#{fun}/#{arity}")
@@ -132,11 +145,11 @@ defmodule Reach.CLI.Format do
   def header(title) do
     width = max(String.length(title) + 4, 40)
     line = cyan(String.duplicate("─", width))
-    "\n#{line}\n  #{bright(title)}\n#{line}\n"
+    "\n#{line}\n  #{bright(title)}\n#{line}"
   end
 
   def section(title) do
-    "\n#{cyan(title)}\n#{cyan(String.duplicate("─", String.length(title)))}\n"
+    "\n#{cyan(title)}\n#{cyan(String.duplicate("─", String.length(title)))}"
   end
 
   def tree_line(item, last?) do

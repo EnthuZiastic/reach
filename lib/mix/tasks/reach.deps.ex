@@ -110,8 +110,11 @@ defmodule Mix.Tasks.Reach.Deps do
     IO.puts(Format.section("Shared state writers"))
 
     case result.shared_state_writers do
-      [] -> IO.puts("  (none found)")
-      writers -> Enum.each(writers, &IO.puts("  #{Format.func_id_to_string(&1)}  ⚠"))
+      [] ->
+        IO.puts("  (none found)")
+
+      writers ->
+        Enum.each(writers, &IO.puts("  #{Format.func_id_to_string(&1)}  #{Format.tag(:warning)}"))
     end
 
     n = length(result.callers)

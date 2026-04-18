@@ -58,7 +58,9 @@ defmodule Mix.Tasks.Reach.DeadCode do
 
       "oneline" ->
         Enum.each(findings, fn f ->
-          IO.puts("#{f.file}:#{f.line}: #{f.kind}: #{f.description}")
+          IO.puts(
+            "#{f.file}:#{Format.cyan(to_string(f.line))}: #{Format.yellow(to_string(f.kind))}: #{f.description}"
+          )
         end)
 
       _ ->
