@@ -536,6 +536,7 @@ defmodule Reach.Effects do
       classify_nif(module) ||
       classify_config(module, function) ||
       classify_from_spec(module, function, arity) ||
+      classify_from_inferred(module, function, arity) ||
       :unknown
   end
 
@@ -592,6 +593,57 @@ defmodule Reach.Effects do
   end
 
   defp classify_from_spec(_, _, _), do: nil
+
+  # Use Elixir 1.19+ inferred types from the ExCk BEAM chunk.
+  # Returns :pure for functions returning data, nil otherwise.
+  if Version.match?(System.version(), ">= 1.19.0") do
+    defp classify_from_inferred(module, function, arity)
+         when is_atom(module) and module not in @impure_modules do
+      case read_inferred_sig(module, function, arity) do
+        {:infer, _, clauses} when is_list(clauses) ->
+          if Enum.all?(clauses, fn {_args, ret} -> not returns_ok_atom?(ret) end) do
+            :pure
+          end
+
+        _ ->
+          nil
+      end
+    rescue
+      _ -> nil
+    end
+
+    defp classify_from_inferred(_, _, _), do: nil
+
+    defp read_inferred_sig(module, function, arity) do
+      case :code.which(module) do
+        path when is_list(path) ->
+          case :beam_lib.chunks(path, [~c"ExCk"]) do
+            {:ok, {_, [{~c"ExCk", chunk}]}} ->
+              case :erlang.binary_to_term(chunk) do
+                {_version, %{exports: exports}} ->
+                  case List.keyfind(exports, {function, arity}, 0) do
+                    {_, %{sig: sig}} -> sig
+                    _ -> nil
+                  end
+
+                _ ->
+                  nil
+              end
+
+            _ ->
+              nil
+          end
+
+        _ ->
+          nil
+      end
+    end
+
+    defp returns_ok_atom?(%{atom: {:union, %{ok: []}}}), do: true
+    defp returns_ok_atom?(_), do: false
+  else
+    defp classify_from_inferred(_, _, _), do: nil
+  end
 
   defp infer_effect_from_spec(clauses) do
     return_types = Enum.map(clauses, &extract_return_type/1)

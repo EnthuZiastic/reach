@@ -9,7 +9,7 @@ defmodule Reach.Graph do
   """
   @spec merge([Graph.t()]) :: Graph.t()
   def merge(graphs) do
-    Enum.reduce(graphs, Graph.new(), fn g, acc ->
+    Enum.reduce(graphs, Graph.new(), fn g, %Graph{} = acc ->
       %Graph{
         acc
         | vertices: Map.merge(acc.vertices, g.vertices),
