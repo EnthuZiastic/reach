@@ -111,7 +111,7 @@ defmodule Reach.SystemDependence do
       all_func_nodes = IR.all_nodes(func_node)
       node_map = Map.new(all_func_nodes, fn n -> {n.id, n} end)
 
-      merged = Graph.add_edges(control_deps, Graph.edges(data_deps))
+      merged = Reach.Graph.merge([control_deps, data_deps])
 
       {func_id, %{graph: merged, nodes: node_map}}
     end)
@@ -119,8 +119,8 @@ defmodule Reach.SystemDependence do
 
   defp merge_function_pdgs(function_pdgs) do
     function_pdgs
-    |> Enum.flat_map(fn {_func_id, pdg} -> Graph.edges(pdg.graph) end)
-    |> then(&Graph.add_edges(Graph.new(), &1))
+    |> Enum.map(fn {_func_id, pdg} -> pdg.graph end)
+    |> Reach.Graph.merge()
   end
 
   @doc false
