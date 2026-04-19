@@ -104,6 +104,48 @@ defmodule Mix.Tasks.Reach.Boundaries do
     |> Enum.sort_by(fn f -> -length(f.effects) end)
   end
 
+  defp analyze_module(m, min) do
+    mod_name = m.meta[:name]
+
+    m
+    |> IR.all_nodes()
+    |> Enum.filter(&(&1.type == :function_def))
+    |> Enum.flat_map(&analyze_function(&1, mod_name, min))
+  end
+
+  defp analyze_function(f, mod_name, min) do
+    calls = f |> IR.all_nodes() |> Enum.filter(&(&1.type == :call))
+
+    effects =
+      calls
+      |> Enum.map(&Effects.classify/1)
+      |> MapSet.new()
+      |> MapSet.delete(:pure)
+      |> MapSet.delete(:unknown)
+
+    if MapSet.size(effects) >= min do
+      effect_calls =
+        calls
+        |> Enum.reject(&(Effects.classify(&1) in [:pure, :unknown]))
+        |> Enum.map(fn c -> %{effect: Effects.classify(c), call: call_name(c)} end)
+        |> Enum.uniq_by(& &1.call)
+        |> Enum.sort_by(&to_string(&1.effect))
+
+      [
+        %{
+          module: inspect(mod_name),
+          function: "\#{f.meta[:name]}/\#{f.meta[:arity]}",
+          effects: MapSet.to_list(effects) |> Enum.sort(),
+          calls: effect_calls,
+          file: if(f.source_span, do: f.source_span.file),
+          line: if(f.source_span, do: f.source_span.start_line)
+        }
+      ]
+    else
+      []
+    end
+  end
+
   defp call_name(node) do
     mod = node.meta[:module]
     fun = node.meta[:function]
@@ -119,7 +161,7 @@ defmodule Mix.Tasks.Reach.Boundaries do
       IO.puts("  (no mixed-effect functions found)\n")
     else
       Enum.each(findings, fn f ->
-        effects_str = f.effects |> Enum.map(&effect_color/1) |> Enum.join(" + ")
+        effects_str = Enum.map_join(f.effects, " + ", &effect_color/1)
 
         IO.puts("  #{Format.bright("#{f.module}.#{f.function}")}  #{effects_str}")
 

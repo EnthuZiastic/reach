@@ -23,6 +23,7 @@ defmodule Mix.Tasks.Reach.Hotspots do
   alias Reach.CLI.Format
   alias Reach.CLI.Project
   alias Reach.IR
+  alias Reach.IR.Helpers
 
   @shortdoc "Functions ranked by complexity × callers"
 
@@ -73,7 +74,7 @@ defmodule Mix.Tasks.Reach.Hotspots do
           branches: branches,
           callers: callers,
           score: branches * callers,
-          clauses: Reach.IR.Helpers.clause_labels(f),
+          clauses: Helpers.clause_labels(f),
           file: file,
           line: line
         }

@@ -30,6 +30,7 @@ defmodule Mix.Tasks.Reach.Depth do
   alias Reach.ControlFlow
   alias Reach.Dominator
   alias Reach.IR
+  alias Reach.IR.Helpers
 
   @shortdoc "Functions ranked by dominator tree depth"
 
@@ -81,7 +82,7 @@ defmodule Mix.Tasks.Reach.Depth do
                 module: inspect(mod_name),
                 function: "#{f.meta[:name]}/#{f.meta[:arity]}",
                 depth: depth,
-                clauses: Reach.IR.Helpers.clause_labels(f),
+                clauses: Helpers.clause_labels(f),
                 file: file,
                 line: line
               }

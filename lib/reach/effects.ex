@@ -712,11 +712,29 @@ defmodule Reach.Effects do
   defp classify_config(_, _), do: nil
 
   defp classify_state(module, function) do
+    classify_ets(module, function) ||
+      classify_process_dict(module, function) ||
+      classify_shared_mem(module, function)
+  end
+
+  defp classify_ets(module, function) do
     cond do
       ets_write?(module, function) -> :write
       ets_read?(module, function) -> :read
+      true -> nil
+    end
+  end
+
+  defp classify_process_dict(module, function) do
+    cond do
       process_dict_write?(module, function) -> :write
       process_dict_read?(module, function) -> :read
+      true -> nil
+    end
+  end
+
+  defp classify_shared_mem(module, function) do
+    cond do
       atomics_write?(module, function) -> :write
       atomics_read?(module, function) -> :read
       persistent_term_write?(module, function) -> :write
