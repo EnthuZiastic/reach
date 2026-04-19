@@ -329,9 +329,6 @@ defmodule Reach.Effects do
     :re,
     NaiveDateTime,
     Time,
-    Jason,
-    Jason.OrderedObject,
-    Poison
   ]
 
   @pure_kernel_functions [
