@@ -83,6 +83,8 @@ Analysis commands (all support `--format text|json|oneline`):
 | `mix reach.flow` | Data flow / taint tracing (--from/--to or --variable) |
 | `mix reach.slice` | Program slicing (backward/forward from a line) |
 | `mix reach.graph` | Terminal CFG rendering (requires boxart) |
+| `mix reach.xref` | Cross-function data flow (parameter, return, state edges) |
+| `mix reach.concurrency` | Task/monitor/spawn patterns and supervisor topology |
 | `mix reach.otp` | GenServer state machines, ETS/process-dict coupling, missing handlers |
 
 ## What NOT to Do

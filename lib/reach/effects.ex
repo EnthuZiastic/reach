@@ -96,7 +96,89 @@ defmodule Reach.Effects do
   def conflicting?(:receive, :receive), do: true
   def conflicting?(_, _), do: false
 
-  # --- Pure function database ---
+  @doc """
+  Infers effects for project-local functions by analyzing their call bodies.
+
+  Walks all function definitions and classifies each based on the effects
+  of its callees. Iterates until no new classifications are found (fixed-point).
+  Results are cached in the ETS classify cache.
+  """
+  @spec infer_local_effects(%{Reach.IR.Node.id() => Reach.IR.Node.t()}) :: :ok
+  def infer_local_effects(node_map) do
+    ensure_cache()
+
+    func_defs =
+      node_map
+      |> Map.values()
+      |> Enum.filter(&(&1.type == :function_def))
+
+    func_calls =
+      Map.new(func_defs, fn f ->
+        calls =
+          f
+          |> Reach.IR.all_nodes()
+          |> Enum.filter(&(&1.type == :call and &1.meta[:kind] not in [:field_access]))
+          |> Enum.reject(&(&1.meta[:function] in @compile_time_ops))
+
+        key = {f.meta[:module], f.meta[:name], f.meta[:arity]}
+        {key, calls}
+      end)
+
+    do_infer(func_calls, 0)
+  end
+
+  defp do_infer(func_calls, prev_classified) do
+    newly_classified =
+      Enum.count(func_calls, fn {key, calls} ->
+        {_mod, _fun, _arity} = key
+        cached = lookup_cache(key)
+
+        if cached == :miss do
+          effects =
+            calls
+            |> Enum.map(&classify/1)
+            |> Enum.uniq()
+            |> Enum.reject(&(&1 == :pure))
+
+          case effects do
+            [] ->
+              put_cache(key, :pure)
+              true
+
+            _ ->
+              if :unknown in effects do
+                false
+              else
+                put_cache(key, merge_effects(effects))
+                true
+              end
+          end
+        else
+          false
+        end
+      end)
+
+    if newly_classified > 0 and newly_classified != prev_classified do
+      do_infer(func_calls, newly_classified)
+    else
+      :ok
+    end
+  end
+
+  defp merge_effects(effects) do
+    cond do
+      :write in effects -> :write
+      :io in effects -> :io
+      :send in effects -> :send
+      :receive in effects -> :receive
+      :exception in effects -> :exception
+      :read in effects -> :read
+      :nif in effects -> :nif
+      true -> :unknown
+    end
+  end
+
+    # --- Pure function database ---
 
   @pure_modules [
     Access,
@@ -258,12 +340,16 @@ defmodule Reach.Effects do
     ArgumentError -> :ok
   end
 
-  defp classify_call(nil, function, _arity) do
+  defp classify_call(nil, function, arity) do
     cond do
       function in @pure_kernel_functions -> :pure
       function in [:raise, :throw, :exit] -> :exception
       function in [:send] -> :send
-      true -> :unknown
+      true ->
+        case lookup_cache({nil, function, arity}) do
+          {:ok, result} -> result
+          :miss -> :unknown
+        end
     end
   end
 

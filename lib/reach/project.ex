@@ -296,6 +296,8 @@ defmodule Reach.Project do
         Graph.add_edge(g, v1, v2, label: label)
       end)
 
+    Reach.Effects.infer_local_effects(merged_nodes)
+
     %__MODULE__{
       modules: module_sdgs,
       graph: merged_graph,

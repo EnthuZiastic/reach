@@ -4,7 +4,7 @@
 
 ### New
 
-- **4 analysis commands** for codebase-level insights:
+- **6 analysis commands** for codebase-level insights:
   - `mix reach.coupling` — module-level coupling metrics (afferent/efferent
     coupling, Martin's instability metric, circular dependency detection).
     `--graph` renders the module dependency graph via boxart.
@@ -14,6 +14,10 @@
     flow nesting). `--graph` renders the CFG of the deepest function.
   - `mix reach.effects` — effect classification distribution across the
     codebase and top unclassified calls. `--module` restricts to one module.
+  - `mix reach.xref` — cross-function data flow via the system dependence
+    graph (parameter, return, state, and call edges between functions).
+  - `mix reach.concurrency` — Task.async/await pairing, process monitors,
+    spawn/link chains, and supervisor topology.
 
 ### Improved
 
@@ -26,6 +30,11 @@
 - Unknown call ratio dropped from ~89% to ~46% across real codebases
   (Plausible, Livebook, Ecto, Oban).
 - Upgraded boxart to 0.3.1.
+- **Local function effect inference** — after building the project graph,
+  Reach walks all function bodies and infers effects from their callees.
+  Functions that only call pure functions are classified as pure. This
+  propagates transitively via fixed-point iteration.
+- Unknown call ratio dropped further to ~30% (from ~89% at the start).
 
 ## 1.4.1
 
