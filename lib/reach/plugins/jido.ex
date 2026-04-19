@@ -207,8 +207,7 @@ defmodule Reach.Plugins.Jido do
 
   defp find_function_defs(all_nodes, name, arity) do
     Enum.filter(all_nodes, fn n ->
-      n.type == :function_def and n.meta[:name] == name and
-        (arity == nil or n.meta[:arity] == arity)
+      n.type == :function_def and n.meta[:name] == name and n.meta[:arity] == arity
     end)
   end
 
