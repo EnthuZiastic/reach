@@ -82,7 +82,7 @@
   - Upgraded boxart to 0.3.2.
 - **Clause breakdown** in `reach.hotspots` and `reach.depth` — multi-clause
   functions show dispatch labels (e.g. "53 clauses: save, delete, ...").
-- **Shared helpers** — `Reach.IR.Helpers.clause_labels/1` and
+- **Shared helpers** — clause_labels/1 and
   `Format.threshold_color/3` extracted from duplicated code.
 - **Unknown call ratio dropped from ~89% to ~11%** across real codebases
   (tested on Plausible, Livebook, Tymeslot, OpenPace, Beacon, Ecto, Oban).
@@ -90,7 +90,7 @@
 ### Performance
 
 - **~30% faster project analysis** (Plausible 466 files: 2.7s → 1.9s).
-- `Reach.Graph.merge/1` — direct map merge instead of per-edge
+- Reach.Graph.merge/1 — direct map merge instead of per-edge
   `Graph.add_edges` loop.
 - `HigherOrder.add_edges` — moved `pure_call?` typespec check from hot
   path to one-time catalog build.
