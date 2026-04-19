@@ -85,6 +85,7 @@ Analysis commands (all support `--format text|json|oneline`):
 | `mix reach.graph` | Terminal CFG rendering (requires boxart) |
 | `mix reach.xref` | Cross-function data flow (parameter, return, state edges) |
 | `mix reach.concurrency` | Task/monitor/spawn patterns and supervisor topology |
+| `mix reach.boundaries` | Functions with multiple distinct side effects |
 | `mix reach.otp` | GenServer state machines, ETS/process-dict coupling, missing handlers |
 
 ## What NOT to Do

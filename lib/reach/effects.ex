@@ -717,6 +717,10 @@ defmodule Reach.Effects do
       ets_read?(module, function) -> :read
       process_dict_write?(module, function) -> :write
       process_dict_read?(module, function) -> :read
+      atomics_write?(module, function) -> :write
+      atomics_read?(module, function) -> :read
+      persistent_term_write?(module, function) -> :write
+      persistent_term_read?(module, function) -> :read
       true -> nil
     end
   end
@@ -815,12 +819,29 @@ defmodule Reach.Effects do
   defp process_dict_read?(Process, :get_keys), do: true
   defp process_dict_read?(_, _), do: false
 
+  defp atomics_write?(mod, f)
+       when mod in [:atomics, :counters] and f in [:put, :add, :add_get, :sub, :exchange],
+       do: true
+
+  defp atomics_write?(_, _), do: false
+
+  defp atomics_read?(mod, f)
+       when mod in [:atomics, :counters] and f in [:get, :info],
+       do: true
+
+  defp atomics_read?(:atomics, :new), do: false
+  defp atomics_read?(:counters, :new), do: false
+  defp atomics_read?(_, _), do: false
+
+  defp persistent_term_write?(:persistent_term, f) when f in [:put, :erase], do: true
+  defp persistent_term_write?(_, _), do: false
+
+  defp persistent_term_read?(:persistent_term, f) when f in [:get, :get_keys], do: true
+  defp persistent_term_read?(_, _), do: false
+
   defp exception_function?(Kernel, f) when f in [:raise, :throw, :exit], do: true
   defp exception_function?(:erlang, f) when f in [:error, :throw, :exit], do: true
   defp exception_function?(_, _), do: false
 
-  defp nif_module?(:atomics), do: true
-  defp nif_module?(:counters), do: true
-  defp nif_module?(:persistent_term), do: true
   defp nif_module?(_), do: false
 end

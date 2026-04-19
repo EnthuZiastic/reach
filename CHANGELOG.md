@@ -4,7 +4,7 @@
 
 ### New
 
-- **6 analysis commands** for codebase-level insights:
+- **7 analysis commands** for codebase-level insights:
   - `mix reach.coupling` — module-level coupling metrics (afferent/efferent
     coupling, Martin's instability metric, circular dependency detection).
     `--graph` renders the module dependency graph via boxart.
@@ -16,6 +16,8 @@
     codebase and top unclassified calls. `--module` restricts to one module.
   - `mix reach.xref` — cross-function data flow via the system dependence
     graph (parameter, return, state, and call edges between functions).
+  - `mix reach.boundaries` — functions with multiple distinct side effects
+    (read+write, write+send, etc.). `--min` sets the threshold.
   - `mix reach.concurrency` — Task.async/await pairing, process monitors,
     spawn/link chains, and supervisor topology.
 - **Plugin `classify_effect/1` callback** — plugins can now teach the
