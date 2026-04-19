@@ -117,8 +117,14 @@ defmodule Reach.Frontend.Elixir do
 
   # Module definition
   defp translate({:defmodule, meta, [alias_ast, [do: body]]}, counter, file) do
+    prev_aliases = Process.get(:reach_alias_map, %{})
+    aliases = collect_aliases(body, module_name(alias_ast))
+    Process.put(:reach_alias_map, Map.merge(prev_aliases, aliases))
+
     body_node = translate(body, counter, file)
     merged_body = group_function_clauses(body_node)
+
+    Process.put(:reach_alias_map, prev_aliases)
 
     %Node{
       id: Counter.next(counter),
@@ -957,7 +963,8 @@ defmodule Reach.Frontend.Elixir do
 
   defp module_name({:__aliases__, _, parts}) do
     if Enum.all?(parts, &is_atom/1) do
-      Module.concat(parts)
+      raw = Module.concat(parts)
+      resolve_alias(raw)
     else
       {:dynamic, parts}
     end
@@ -965,6 +972,68 @@ defmodule Reach.Frontend.Elixir do
 
   defp module_name(atom) when is_atom(atom), do: atom
   defp module_name(other), do: other
+
+  defp resolve_alias(mod) do
+    case Process.get(:reach_alias_map, %{}) do
+      aliases when map_size(aliases) > 0 -> Map.get(aliases, mod, mod)
+      _ -> mod
+    end
+  end
+
+  defp collect_aliases(body, current_module) do
+    body
+    |> extract_alias_forms()
+    |> Map.new(fn {short, full} ->
+      resolved = if current_module && !String.starts_with?(Atom.to_string(full), "Elixir."),
+        do: full, else: full
+      {short, resolved}
+    end)
+  end
+
+  defp extract_alias_forms({:__block__, _, exprs}), do: Enum.flat_map(exprs, &extract_alias_forms/1)
+
+  defp extract_alias_forms({:alias, _, [{:__aliases__, _, parts}]}) when is_list(parts) do
+    if Enum.all?(parts, &is_atom/1) do
+      full = Module.concat(parts)
+      short = List.last(parts) |> then(&Module.concat([&1]))
+      [{short, full}]
+    else
+      []
+    end
+  end
+
+  defp extract_alias_forms({:alias, _, [{:__aliases__, _, parts}, [as: {:__aliases__, _, as_parts}]]})
+       when is_list(parts) and is_list(as_parts) do
+    if Enum.all?(parts, &is_atom/1) and Enum.all?(as_parts, &is_atom/1) do
+      full = Module.concat(parts)
+      short = Module.concat(as_parts)
+      [{short, full}]
+    else
+      []
+    end
+  end
+
+  # Multi-alias: alias Foo.Bar.{Baz, Qux}
+  defp extract_alias_forms({:alias, _, [{{:., _, [{:__aliases__, _, prefix}, :{}]}, _, suffixes}]})
+       when is_list(prefix) do
+    if Enum.all?(prefix, &is_atom/1) do
+      Enum.flat_map(suffixes, fn
+        {:__aliases__, _, suffix_parts} when is_list(suffix_parts) ->
+          if Enum.all?(suffix_parts, &is_atom/1) do
+            full = Module.concat(prefix ++ suffix_parts)
+            short = Module.concat(suffix_parts)
+            [{short, full}]
+          else
+            []
+          end
+        _ -> []
+      end)
+    else
+      []
+    end
+  end
+
+  defp extract_alias_forms(_), do: []
 
   defp first_child_span(nil), do: nil
 

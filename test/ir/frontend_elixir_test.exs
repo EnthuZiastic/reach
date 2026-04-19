@@ -531,4 +531,183 @@ defmodule Reach.Frontend.ElixirTest do
       assert ids == Enum.uniq(ids)
     end
   end
+
+  describe "alias resolution" do
+    test "simple alias resolves to full module" do
+      nodes =
+        IR.from_string!("""
+        defmodule MyApp do
+          alias Plausible.Ingestion.Event
+
+          def test, do: Event.build()
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :build))
+      assert [call] = calls
+      assert call.meta[:module] == Plausible.Ingestion.Event
+    end
+
+    test "alias with :as option" do
+      nodes =
+        IR.from_string!("""
+        defmodule MyApp do
+          alias Foo.Bar.Baz, as: B
+
+          def test, do: B.run()
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :run))
+      assert [call] = calls
+      assert call.meta[:module] == Foo.Bar.Baz
+    end
+
+    test "multi-alias with curly braces" do
+      nodes =
+        IR.from_string!("""
+        defmodule MyApp do
+          alias Plausible.Stats.{Query, QueryRunner, Filters}
+
+          def test do
+            Query.new()
+            QueryRunner.run()
+            Filters.parse()
+          end
+        end
+        """)
+
+      calls =
+        nodes
+        |> IR.all_nodes()
+        |> Enum.filter(&(&1.type == :call and &1.meta[:kind] == :remote))
+        |> Enum.reject(&(&1.meta[:function] in [:alias, :{}, :__aliases__]))
+
+      modules = Enum.map(calls, & &1.meta[:module]) |> Enum.sort()
+      assert Plausible.Stats.Filters in modules
+      assert Plausible.Stats.Query in modules
+      assert Plausible.Stats.QueryRunner in modules
+    end
+
+    test "fully qualified name still works" do
+      nodes =
+        IR.from_string!("""
+        defmodule MyApp do
+          alias Some.Other.Thing
+
+          def test, do: Some.Other.Thing.call()
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :call))
+      assert [call] = calls
+      assert call.meta[:module] == Some.Other.Thing
+    end
+
+    test "alias does not leak across modules" do
+      nodes =
+        IR.from_string!("""
+        defmodule A do
+          alias Foo.Bar
+          def test, do: Bar.run()
+        end
+
+        defmodule B do
+          def test, do: Bar.run()
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :run))
+      assert length(calls) == 2
+
+      [call_a, call_b] = Enum.sort_by(calls, & &1.id)
+      assert call_a.meta[:module] == Foo.Bar
+      assert call_b.meta[:module] == Bar
+    end
+  end
+
+  describe "field access" do
+    test "var.field is classified as field_access" do
+      nodes =
+        IR.from_string!("""
+        defmodule M do
+          def test(socket), do: socket.assigns
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :assigns))
+      assert [call] = calls
+      assert call.meta[:kind] == :field_access
+    end
+
+    test "chained field access" do
+      nodes =
+        IR.from_string!("""
+        defmodule M do
+          def test(socket), do: socket.assigns.user
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:kind] == :field_access))
+      assert length(calls) == 2
+      fields = Enum.map(calls, & &1.meta[:function]) |> Enum.sort()
+      assert fields == [:assigns, :user]
+    end
+
+    test "Module.function() is NOT field_access" do
+      nodes =
+        IR.from_string!("""
+        defmodule M do
+          def test, do: Map.get(%{}, :key)
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :get))
+      assert [call] = calls
+      assert call.meta[:kind] == :remote
+      assert call.meta[:module] == Map
+    end
+
+    test "field access is pure" do
+      nodes =
+        IR.from_string!("""
+        defmodule M do
+          def test(conn), do: conn.params
+        end
+        """)
+
+      calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :params))
+      assert [call] = calls
+      assert Reach.Effects.classify(call) == :pure
+    end
+  end
+
+  describe "compile-time classification" do
+    test "@doc is pure" do
+      nodes =
+        IR.from_string!("""
+        defmodule M do
+          @doc "hello"
+          def test, do: :ok
+        end
+        """)
+
+      doc_calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :doc))
+      assert [call] = doc_calls
+      assert Reach.Effects.classify(call) == :pure
+    end
+
+    test "use is pure" do
+      nodes =
+        IR.from_string!("""
+        defmodule M do
+          use GenServer
+        end
+        """)
+
+      use_calls = nodes |> IR.all_nodes() |> Enum.filter(&(&1.type == :call and &1.meta[:function] == :use))
+      assert [call] = use_calls
+      assert Reach.Effects.classify(call) == :pure
+    end
+  end
 end
