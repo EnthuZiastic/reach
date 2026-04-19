@@ -167,9 +167,12 @@ defmodule Reach.Effects do
   def infer_local_effects(node_map) do
     ensure_cache()
 
+    all_nodes = Map.values(node_map)
+
+    module_map = build_module_func_map(all_nodes)
+
     func_calls =
-      node_map
-      |> Map.values()
+      all_nodes
       |> Enum.filter(&(&1.type == :function_def))
       |> Map.new(fn f ->
         calls =
@@ -181,7 +184,31 @@ defmodule Reach.Effects do
         {{f.meta[:module], f.meta[:name], f.meta[:arity]}, calls}
       end)
 
-    do_infer(func_calls, 0)
+    do_infer(func_calls, module_map, 0)
+  end
+
+  defp build_module_func_map(all_nodes) do
+    all_nodes
+    |> Enum.filter(&(&1.type == :module_def))
+    |> Enum.reduce(%{}, fn mod_def, acc ->
+      mod_name = mod_def.meta[:name]
+
+      mod_def.children
+      |> Enum.flat_map(fn child ->
+        case child.type do
+          :function_def -> [child]
+          :block -> Enum.filter(child.children, &(&1.type == :function_def))
+          _ -> []
+        end
+      end)
+      |> Enum.reduce(acc, fn func, inner ->
+        key = {nil, func.meta[:name], func.meta[:arity]}
+
+        Map.update(inner, key, [mod_name], fn mods ->
+          if mod_name in mods, do: mods, else: [mod_name | mods]
+        end)
+      end)
+    end)
   end
 
   defp collect_calls(nodes) when is_list(nodes), do: Enum.flat_map(nodes, &collect_calls/1)
@@ -196,10 +223,9 @@ defmodule Reach.Effects do
 
   defp collect_calls(_), do: []
 
-  defp do_infer(func_calls, prev_classified) do
+  defp do_infer(func_calls, module_map, prev_classified) do
     newly_classified =
       Enum.count(func_calls, fn {key, calls} ->
-        {_mod, _fun, _arity} = key
         cached = lookup_cache(key)
 
         if cached == :miss do
@@ -211,14 +237,14 @@ defmodule Reach.Effects do
 
           case effects do
             [] ->
-              put_cache(key, :pure)
+              cache_with_modules(key, :pure, module_map)
               true
 
             _ ->
               if :unknown in effects do
                 false
               else
-                put_cache(key, merge_effects(effects))
+                cache_with_modules(key, merge_effects(effects), module_map)
                 true
               end
           end
@@ -228,10 +254,23 @@ defmodule Reach.Effects do
       end)
 
     if newly_classified > 0 and newly_classified != prev_classified do
-      do_infer(func_calls, newly_classified)
+      do_infer(func_calls, module_map, newly_classified)
     else
       :ok
     end
+  end
+
+  defp cache_with_modules({nil, name, arity} = key, effect, module_map) do
+    put_cache(key, effect)
+
+    case Map.get(module_map, key) do
+      nil -> :ok
+      modules -> Enum.each(modules, fn mod -> put_cache({mod, name, arity}, effect) end)
+    end
+  end
+
+  defp cache_with_modules(key, effect, _module_map) do
+    put_cache(key, effect)
   end
 
   defp merge_effects(effects) do
