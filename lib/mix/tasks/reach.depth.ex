@@ -81,7 +81,7 @@ defmodule Mix.Tasks.Reach.Depth do
                 module: inspect(mod_name),
                 function: "#{f.meta[:name]}/#{f.meta[:arity]}",
                 depth: depth,
-                clauses: extract_clauses(f),
+                clauses: Reach.IR.Helpers.clause_labels(f),
                 file: file,
                 line: line
               }
@@ -115,30 +115,6 @@ defmodule Mix.Tasks.Reach.Depth do
     end
   end
 
-  defp extract_clauses(func_def) do
-    func_def.children
-    |> Enum.filter(&(&1.type == :clause))
-    |> Enum.map(fn clause ->
-      clause.children
-      |> Enum.take_while(fn c -> c.type not in [:guard, :block] end)
-      |> List.first()
-      |> clause_label()
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp clause_label(nil), do: nil
-  defp clause_label(%{type: :literal, meta: %{value: v}}) when is_binary(v), do: v
-  defp clause_label(%{type: :literal, meta: %{value: v}}) when is_atom(v), do: inspect(v)
-
-  defp clause_label(%{type: :tuple, children: [%{type: :literal, meta: %{value: v}} | _]})
-       when is_atom(v),
-       do: inspect(v)
-
-  defp clause_label(%{type: :var, meta: %{name: name}}), do: to_string(name)
-  defp clause_label(%{type: :match, children: [pattern | _]}), do: clause_label(pattern)
-  defp clause_label(_), do: nil
-
   # --- Rendering ---
 
   defp render_text(result) do
@@ -169,9 +145,7 @@ defmodule Mix.Tasks.Reach.Depth do
     end)
   end
 
-  defp depth_color(d) when d >= 20, do: Format.red(to_string(d))
-  defp depth_color(d) when d >= 10, do: Format.yellow(to_string(d))
-  defp depth_color(d), do: to_string(d)
+  defp depth_color(d), do: Format.threshold_color(d, 10, 20)
 
   defp render_graph(project, top_func) do
     unless BoxartGraph.available?() do

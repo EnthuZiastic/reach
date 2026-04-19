@@ -167,6 +167,14 @@ defmodule Reach.CLI.Format do
   def count(n), do: bright(to_string(n))
   def summary(text), do: faint(text)
 
+  def threshold_color(value, warn, crit) do
+    cond do
+      value >= crit -> red(to_string(value))
+      value >= warn -> yellow(to_string(value))
+      true -> to_string(value)
+    end
+  end
+
   defp maybe_add(map, _key, nil), do: map
   defp maybe_add(map, key, val), do: Map.put(map, key, jsonify(val))
 end
