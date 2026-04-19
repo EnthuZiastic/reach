@@ -132,6 +132,7 @@ defmodule Mix.Tasks.Reach.Depth do
             "depth=#{depth_color(f.depth)}"
         )
 
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
         if f.file do
           IO.puts("    #{Format.faint("#{f.file}:#{f.line}")}")
         end

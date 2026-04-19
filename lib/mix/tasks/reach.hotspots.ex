@@ -117,6 +117,7 @@ defmodule Mix.Tasks.Reach.Hotspots do
             "branches=#{h.branches}  callers=#{h.callers}  score=#{score_color(h.score)}"
         )
 
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
         if h.file do
           IO.puts("    #{Format.faint("#{h.file}:#{h.line}")}")
         end

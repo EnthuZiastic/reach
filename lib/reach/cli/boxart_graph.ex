@@ -75,6 +75,7 @@ defmodule Reach.CLI.BoxartGraph do
           Enum.flat_map(callbacks, fn %{callback: {name, arity}} ->
             id = "#{name}/#{arity}"
 
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             if name in [:terminate, :code_change],
               do: [%Transition{from: id, to: "end"}],
               else: []
@@ -253,6 +254,7 @@ defmodule Reach.CLI.BoxartGraph do
 
   # credo:disable-for-next-line Credo.Check.Refactor.Apply
   defp render_mindmap(graph) do
+    # credo:disable-for-next-line Credo.Check.Design.AliasUsage
     Boxart.Render.Mindmap.render(graph, [])
   end
 

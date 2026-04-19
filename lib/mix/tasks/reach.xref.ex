@@ -120,6 +120,7 @@ defmodule Mix.Tasks.Reach.Xref do
 
         f
         |> IR.all_nodes()
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
         |> Enum.reduce(inner, fn node, a -> Map.put_new(a, node.id, func_id) end)
       end)
     end)
@@ -156,6 +157,7 @@ defmodule Mix.Tasks.Reach.Xref do
         labels_str = Enum.map_join(r.labels, ", ", fn {l, c} -> "#{l}×#{c}" end)
         IO.puts("    #{r.edges} edges: #{Format.faint(labels_str)}")
 
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
         if r.variables != [] do
           IO.puts("    via: #{Format.cyan(Enum.join(r.variables, ", "))}")
         end

@@ -203,6 +203,7 @@ defmodule Reach.Effects do
       key = {nil, func.meta[:name], func.meta[:arity]}
 
       Map.update(inner, key, [mod_name], fn mods ->
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
         if mod_name in mods, do: mods, else: [mod_name | mods]
       end)
     end)
@@ -603,6 +604,7 @@ defmodule Reach.Effects do
          when is_atom(module) and module not in @impure_modules do
       case read_inferred_sig(module, function, arity) do
         {:infer, _, clauses} when is_list(clauses) ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if Enum.all?(clauses, fn {_args, ret} -> not returns_ok_atom?(ret) end) do
             :pure
           end

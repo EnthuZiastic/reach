@@ -127,6 +127,7 @@ defmodule Mix.Tasks.Reach.Boundaries do
           IO.puts("    #{effect_color(c.effect)} #{c.call}")
         end)
 
+        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
         if f.file do
           IO.puts("    #{Format.faint("#{f.file}:#{f.line}")}")
         end

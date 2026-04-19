@@ -1031,6 +1031,7 @@ defmodule Reach.Frontend.Elixir do
       funs =
         case Keyword.get(opts, :only) do
           nil ->
+            # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case Keyword.get(opts, :except) do
               nil -> exported_functions(mod)
               except -> exported_functions(mod) -- except
@@ -1096,6 +1097,7 @@ defmodule Reach.Frontend.Elixir do
     if Enum.all?(prefix, &is_atom/1) do
       Enum.flat_map(suffixes, fn
         {:__aliases__, _, suffix_parts} when is_list(suffix_parts) ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           if Enum.all?(suffix_parts, &is_atom/1) do
             full = Module.concat(prefix ++ suffix_parts)
             short = Module.concat(suffix_parts)
