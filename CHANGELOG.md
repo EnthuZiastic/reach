@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Improved
+
+- **Unified target format** — `reach.slice`, `reach.impact`, `reach.deps`,
+  and `reach.graph` all accept both `Module.function/arity` and `file:line`
+  formats. Previously `reach.slice` only accepted `file:line`, and
+  `reach.impact`/`reach.deps` only accepted `Module.function/arity`.
+
 ## 1.5.1
 
 ### New
