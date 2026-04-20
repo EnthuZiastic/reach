@@ -59,6 +59,30 @@ defmodule Reach.Plugins.Ash do
     :calculate!
   ]
 
+  @domain_read_prefixes [
+    "get",
+    "list",
+    "read",
+    "count",
+    "exists",
+    "aggregate"
+  ]
+
+  @domain_write_prefixes ["create", "update", "destroy", "delete"]
+
+  @domain_module_suffixes [
+    "Repo",
+    "Controller",
+    "View",
+    "Live",
+    "Component",
+    "Socket",
+    "Channel",
+    "Endpoint",
+    "Router",
+    "Worker"
+  ]
+
   # --- Ash.Changeset (all pure — builds intent, doesn't execute) ---
 
   @changeset_fns [
@@ -614,39 +638,31 @@ defmodule Reach.Plugins.Ash do
   defp changeset_action_name(_), do: :unknown
 
   defp domain_module?(mod) when is_atom(mod) and not is_nil(mod) do
-    mod_str = Atom.to_string(mod)
-
-    not String.ends_with?(mod_str, "Repo") and
-      not String.ends_with?(mod_str, "Controller") and
-      not String.ends_with?(mod_str, "View") and
-      not String.ends_with?(mod_str, "Live") and
-      not String.ends_with?(mod_str, "Component") and
-      not String.ends_with?(mod_str, "Socket") and
-      not String.ends_with?(mod_str, "Channel") and
-      not String.ends_with?(mod_str, "Endpoint") and
-      not String.ends_with?(mod_str, "Router") and
-      not String.ends_with?(mod_str, "Worker") and
-      Code.ensure_loaded?(mod) and
-      function_exported?(mod, :spark_dsl_config, 0)
+    mod
+    |> Atom.to_string()
+    |> excluded_domain_module?()
+    |> Kernel.not()
+    |> Kernel.and(Code.ensure_loaded?(mod))
+    |> Kernel.and(function_exported?(mod, :spark_dsl_config, 0))
   end
 
   defp domain_module?(_), do: false
+
+  defp excluded_domain_module?(mod_str) do
+    Enum.any?(@domain_module_suffixes, &String.ends_with?(mod_str, &1))
+  end
 
   defp classify_domain_call(fun) do
     fun_str = Atom.to_string(fun)
 
     cond do
-      String.starts_with?(fun_str, "create") -> :write
-      String.starts_with?(fun_str, "update") -> :write
-      String.starts_with?(fun_str, "destroy") -> :write
-      String.starts_with?(fun_str, "delete") -> :write
-      String.starts_with?(fun_str, "get") -> :read
-      String.starts_with?(fun_str, "list") -> :read
-      String.starts_with?(fun_str, "read") -> :read
-      String.starts_with?(fun_str, "count") -> :read
-      String.starts_with?(fun_str, "exists") -> :read
-      String.starts_with?(fun_str, "aggregate") -> :read
+      prefixed_with?(fun_str, @domain_write_prefixes) -> :write
+      prefixed_with?(fun_str, @domain_read_prefixes) -> :read
       true -> nil
     end
+  end
+
+  defp prefixed_with?(value, prefixes) do
+    Enum.any?(prefixes, &String.starts_with?(value, &1))
   end
 end

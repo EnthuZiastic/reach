@@ -593,7 +593,7 @@ defmodule Reach.AshPluginTest do
       edges = Reach.edges(graph)
       ci_edges = Enum.filter(edges, &match?({:ash_code_interface, _}, &1.label))
 
-      assert length(ci_edges) >= 1
+      assert ci_edges != []
     end
   end
 
