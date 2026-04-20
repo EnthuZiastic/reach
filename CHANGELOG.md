@@ -9,12 +9,29 @@
   formats. Previously `reach.slice` only accepted `file:line`, and
   `reach.impact`/`reach.deps` only accepted `Module.function/arity`.
 
+- **100–500x faster function resolution** — indexed lookups replace linear
+  scans of all IR nodes. On a 4k-function codebase: 10ms/call → 11–83µs/call.
+
+- **Default argument awareness** — `find_function` matches functions called
+  with fewer arguments than their definition (e.g. `foo/1` resolves to
+  `def foo(a, b \\ nil)`).
+
 ### Fixed
 
 - **Function resolution** — correctly resolve functions when module name
   casing differs from the source (e.g. `QuickBEAM.Runtime` vs
   `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
   as nil by falling back to file path matching.
+
+- **False positive elimination** — module-qualified lookups no longer fall
+  back to unrelated functions when the target module isn't found.
+  Verified zero false positives across 14 real codebases (22k+ functions).
+
+### Internal
+
+- Added `ex_dna` to `mix ci` and eliminated all 9 pre-existing code clones.
+- Suppressed optional `boxart` undefined-module warnings via
+  `@compile {:no_warn_undefined, ...}`.
 
 ## 1.5.1
 
