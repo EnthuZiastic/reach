@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.1
 
 ### New
 
@@ -13,6 +13,13 @@
   `change`/`validate`/`prepare` callback modules, and code_interface
   `define`-to-action resolution. Auto-detected when the target project
   depends on `ash`.
+
+### Fixed
+
+- **Compilation without boxart** — `reach` now compiles and runs correctly
+  without `boxart` installed. Struct literals (`%State{}`, `%PieChart{}`) that
+  expanded at compile time have been replaced with runtime `struct!/2` calls.
+  Graph commands raise a clear error when invoked without boxart (closes #9).
 
 ## 1.5.0
 
