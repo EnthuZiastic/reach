@@ -65,7 +65,7 @@ defmodule Reach.CLI.Project do
     end)
   end
 
-  defp disambiguate_by_file(nodes, mod, fun, arity) when mod != nil do
+  defp disambiguate_by_file(nodes, mod, fun, arity) when is_atom(mod) and mod != nil do
     path_hint =
       mod
       |> Atom.to_string()
