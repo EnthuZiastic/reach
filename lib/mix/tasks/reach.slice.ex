@@ -3,6 +3,7 @@ defmodule Mix.Tasks.Reach.Slice do
   Program slicing — finds the minimum set of statements that affect a value.
 
       mix reach.slice lib/my_app/user_controller.ex:18
+      mix reach.slice MyApp.UserService.create/1 --variable changeset
       mix reach.slice --forward lib/my_app/user_service.ex:30 --variable user
       mix reach.slice lib/my_app_web/controllers/user_controller.ex:18 --format json
 
@@ -30,7 +31,11 @@ defmodule Mix.Tasks.Reach.Slice do
     {opts, target_args, _} = OptionParser.parse(args, switches: @switches, aliases: @aliases)
 
     unless target_args != [] do
-      Mix.raise("Expected a file:line target. Usage: mix reach.slice lib/foo.ex:42")
+      Mix.raise(
+        "Expected a target. Usage:\n" <>
+          "  mix reach.slice lib/foo.ex:42\n" <>
+          "  mix reach.slice Module.function/arity"
+      )
     end
 
     project = Project.load()
@@ -38,17 +43,18 @@ defmodule Mix.Tasks.Reach.Slice do
     forward? = Keyword.get(opts, :forward, false)
     var_name = opts[:variable]
 
-    target = parse_location(hd(target_args))
+    raw = hd(target_args)
 
-    unless target do
-      Mix.raise("Invalid target. Use file:line format, e.g. lib/foo.ex:42")
-    end
+    {node, target} =
+      case parse_location(raw) do
+        %{} = loc ->
+          n = find_node_at_location(project, loc)
+          unless n, do: Mix.raise("No node found at #{loc.file}:#{loc.line}")
+          {n, loc}
 
-    node = find_node_at_location(project, target)
-
-    unless node do
-      Mix.raise("No node found at #{target.file}:#{target.line}")
-    end
+        nil ->
+          resolve_function_target(project, raw)
+      end
 
     slice_ids = compute_slice(project.graph, node.id, forward?)
     result = filter_and_format(project, slice_ids, var_name)
@@ -93,6 +99,18 @@ defmodule Mix.Tasks.Reach.Slice do
 
   defp render(_format, node, result, forward?, _target) do
     render_text(node, result, forward?)
+  end
+
+  defp resolve_function_target(project, raw) do
+    mfa = Project.resolve_function(project, raw)
+    unless mfa, do: Mix.raise("Function not found: #{raw}")
+
+    func_node = Project.find_function(project, mfa)
+    unless func_node, do: Mix.raise("Function definition not found in IR: #{raw}")
+
+    span = func_node.source_span
+    target = %{file: span[:file], line: span[:start_line]}
+    {func_node, target}
   end
 
   defp parse_location(raw) do
