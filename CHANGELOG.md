@@ -9,6 +9,13 @@
   formats. Previously `reach.slice` only accepted `file:line`, and
   `reach.impact`/`reach.deps` only accepted `Module.function/arity`.
 
+### Fixed
+
+- **Function resolution** — correctly resolve functions when module name
+  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
+  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  as nil by falling back to file path matching.
+
 ## 1.5.1
 
 ### New
@@ -62,6 +69,14 @@
   are classified as `:pure`. Gracefully disabled on older Elixir versions.
 
 ### Improved
+
+### Fixed
+
+- **Function resolution** — correctly resolve functions when module name
+  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
+  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  as nil by falling back to file path matching.
+
 
 - **Alias resolution** — `alias Plausible.Ingestion.Event` then
   `Event.build()` now correctly resolves to `Plausible.Ingestion.Event`.
@@ -152,6 +167,14 @@
 
 ### Improved
 
+### Fixed
+
+- **Function resolution** — correctly resolve functions when module name
+  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
+  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  as nil by falling back to file path matching.
+
+
 - CFG rendering reuses `Visualize.ControlFlow.build_function/2` — same
   line ranges, block merging, and source extraction as the HTML visualization
 - Graph output clamped to terminal width via `Boxart.render max_width`
@@ -209,6 +232,14 @@
   include multi-line pattern children.
 
 ### Improved
+
+### Fixed
+
+- **Function resolution** — correctly resolve functions when module name
+  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
+  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  as nil by falling back to file path matching.
+
 
 - **Performance** — effect classification cached in ETS (shared across
   parallel tasks), SDG construction parallelized across modules.
@@ -336,6 +367,14 @@ elixir, phoenix, ecto, oban, plausible, livebook, blockscout, firezone.
 - **6 built-in plugins**: Phoenix, Ecto, Oban, GenStage, Jido, OpenTelemetry.
 
 ### Improved
+
+### Fixed
+
+- **Function resolution** — correctly resolve functions when module name
+  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
+  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  as nil by falling back to file path matching.
+
 
 - **Call graph** — filtered Ecto query bindings, pipe operators, kernel ops,
   Ecto DSL macros; nil module resolved to detected module; deduplicated edges.
