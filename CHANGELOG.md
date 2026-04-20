@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0
 
 ### Improved
 
@@ -19,8 +19,8 @@
 ### Fixed
 
 - **Function resolution** — correctly resolve functions when module name
-  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
-  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  casing differs from the source (e.g. QuickBEAM.Runtime vs
+  Quickbeam.Runtime). Also handles projects where IR nodes store modules
   as nil by falling back to file path matching.
 
 - **False positive elimination** — module-qualified lookups no longer fall
@@ -90,8 +90,8 @@
 ### Fixed
 
 - **Function resolution** — correctly resolve functions when module name
-  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
-  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  casing differs from the source (e.g. QuickBEAM.Runtime vs
+  Quickbeam.Runtime). Also handles projects where IR nodes store modules
   as nil by falling back to file path matching.
 
 
@@ -187,8 +187,8 @@
 ### Fixed
 
 - **Function resolution** — correctly resolve functions when module name
-  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
-  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  casing differs from the source (e.g. QuickBEAM.Runtime vs
+  Quickbeam.Runtime). Also handles projects where IR nodes store modules
   as nil by falling back to file path matching.
 
 
@@ -253,8 +253,8 @@
 ### Fixed
 
 - **Function resolution** — correctly resolve functions when module name
-  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
-  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  casing differs from the source (e.g. QuickBEAM.Runtime vs
+  Quickbeam.Runtime). Also handles projects where IR nodes store modules
   as nil by falling back to file path matching.
 
 
@@ -388,8 +388,8 @@ elixir, phoenix, ecto, oban, plausible, livebook, blockscout, firezone.
 ### Fixed
 
 - **Function resolution** — correctly resolve functions when module name
-  casing differs from the source (e.g. `QuickBEAM.Runtime` vs
-  `Quickbeam.Runtime`). Also handles projects where IR nodes store modules
+  casing differs from the source (e.g. QuickBEAM.Runtime vs
+  Quickbeam.Runtime). Also handles projects where IR nodes store modules
   as nil by falling back to file path matching.
 
 

@@ -1,7 +1,7 @@
 defmodule Reach.MixProject do
   use Mix.Project
 
-  @version "1.5.1"
+  @version "1.6.0"
   @source_url "https://github.com/dannote/reach"
 
   def project do
