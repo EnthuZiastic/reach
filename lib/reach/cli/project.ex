@@ -73,7 +73,7 @@ defmodule Reach.CLI.Project do
     end
   end
 
-  def parse_mfa(name) do
+  def parse_function_reference(name) do
     case String.split(name, "/", parts: 2) do
       [qualified, arity_str] ->
         case Integer.parse(arity_str) do
@@ -132,16 +132,16 @@ defmodule Reach.CLI.Project do
     nodes = Map.values(project.nodes)
     cg = project.call_graph
 
-    case parse_mfa(name) do
+    case parse_function_reference(name) do
       {mod_str, fun_str, arity} ->
-        resolve_mfa(cg, mod_str, fun_str, arity)
+        resolve_in_call_graph(cg, mod_str, fun_str, arity)
 
       nil ->
         resolve_by_function_name(nodes, name)
     end
   end
 
-  defp resolve_mfa(cg, mod_str, fun_str, arity) do
+  defp resolve_in_call_graph(cg, mod_str, fun_str, arity) do
     mod = String.split(mod_str, ".") |> Enum.map(&String.to_atom/1) |> Module.concat()
     fun = String.to_atom(fun_str)
 

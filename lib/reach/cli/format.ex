@@ -91,7 +91,7 @@ defmodule Reach.CLI.Format do
   def parse_target(args) do
     case args do
       [raw] ->
-        case Reach.CLI.Project.parse_mfa(raw) do
+        case Reach.CLI.Project.parse_function_reference(raw) do
           {mod_str, fun_str, arity} ->
             mod = String.split(mod_str, ".") |> Enum.map(&String.to_atom/1) |> Module.concat()
             {mod, String.to_atom(fun_str), arity}
