@@ -313,6 +313,58 @@ defmodule Reach.OTPTest do
     end
   end
 
+  describe "bare atom message matching" do
+    test "bare atom GenServer.call messages match bare atom handlers" do
+      nodes =
+        IR.from_string!("""
+        defmodule BareAtomServer do
+          use GenServer
+
+          def get_foo, do: GenServer.call(__MODULE__, :get_foo)
+          def get_bar, do: GenServer.call(__MODULE__, :get_bar)
+          def sign(msg), do: GenServer.call(__MODULE__, {:sign, msg})
+
+          @impl true
+          def init(state), do: {:ok, state}
+
+          @impl true
+          def handle_call(:get_foo, _from, state), do: {:reply, state, state}
+          def handle_call(:get_bar, _from, state), do: {:reply, state, state}
+          def handle_call({:sign, msg}, _from, state), do: {:reply, {:ok, msg}, state}
+        end
+        """)
+
+      all = IR.all_nodes(nodes)
+
+      handlers =
+        all
+        |> Enum.filter(fn n ->
+          n.type == :function_def and n.meta[:name] in [:handle_call, :handle_cast, :handle_info]
+        end)
+        |> Enum.flat_map(fn func ->
+          func.children
+          |> Enum.filter(&(&1.type == :clause))
+          |> Enum.flat_map(fn clause ->
+            clause.children
+            |> Enum.take(func.meta[:arity])
+            |> Enum.flat_map(fn
+              %{type: :literal, meta: %{value: val}} when is_atom(val) -> [val]
+              %{type: :tuple, children: children} ->
+                children
+                |> Enum.filter(&(&1.type == :literal))
+                |> Enum.map(& &1.meta[:value])
+              _ -> []
+            end)
+          end)
+        end)
+        |> MapSet.new()
+
+      assert :get_foo in handlers
+      assert :get_bar in handlers
+      assert :sign in handlers
+    end
+  end
+
   describe "integration with system dependence graph" do
     test "OTP edges appear in SDG" do
       {:ok, sdg} =

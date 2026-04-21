@@ -321,17 +321,23 @@ defmodule Mix.Tasks.Reach.Otp do
   defp extract_clause_message_types(func) do
     func.children
     |> Enum.filter(&(&1.type == :clause))
-    |> Enum.flat_map(&extract_tuple_literals(&1, func.meta[:arity]))
+    |> Enum.flat_map(&extract_message_patterns(&1, func.meta[:arity]))
   end
 
-  defp extract_tuple_literals(clause, arity) do
+  defp extract_message_patterns(clause, arity) do
     clause.children
     |> Enum.take(arity)
-    |> Enum.filter(&(&1.type == :tuple))
-    |> Enum.map(fn tuple_node ->
-      tuple_node.children
-      |> Enum.filter(&(&1.type == :literal))
-      |> Enum.map(& &1.meta[:value])
+    |> Enum.flat_map(fn
+      %{type: :literal, meta: %{value: val}} when is_atom(val) ->
+        [val]
+
+      %{type: :tuple, children: children} ->
+        children
+        |> Enum.filter(&(&1.type == :literal))
+        |> Enum.map(& &1.meta[:value])
+
+      _ ->
+        []
     end)
   end
 
