@@ -671,11 +671,8 @@ defmodule Reach do
         clauses = Enum.filter(children, &(&1.type == :clause))
         Enum.flat_map(clauses, &tail_expressions/1)
 
-      %{type: :try, children: children} ->
+      %{type: t, children: children} when t in [:try, :receive, :fn] ->
         Enum.flat_map(children, &tail_expressions/1)
-
-      %{type: :fn, children: clauses} ->
-        Enum.flat_map(clauses, &tail_expressions/1)
 
       leaf ->
         [leaf]
@@ -828,12 +825,20 @@ defmodule Reach do
 
   defp add_descendant_ids(all_nodes, alive_ids) do
     Enum.reduce(all_nodes, alive_ids, fn node, ids ->
-      if MapSet.member?(ids, node.id) and structural_composite?(node) do
-        add_all_descendant_ids(node, ids)
-      else
-        ids
+      cond do
+        not MapSet.member?(ids, node.id) -> ids
+        structural_composite?(node) -> add_all_descendant_ids(node, ids)
+        node.type == :case -> add_case_subject_ids(node, ids)
+        true -> ids
       end
     end)
+  end
+
+  defp add_case_subject_ids(node, ids) do
+    node.children
+    |> Enum.reject(&(&1.type == :clause))
+    |> Enum.flat_map(&Reach.IR.all_nodes/1)
+    |> Enum.reduce(ids, fn child, acc -> MapSet.put(acc, child.id) end)
   end
 
   defp add_all_descendant_ids(node, ids) do
@@ -852,7 +857,6 @@ defmodule Reach do
     :binary_op,
     :unary_op,
     :cons,
-    :case,
     :fn,
     :guard
   ]
@@ -890,13 +894,25 @@ defmodule Reach do
     all_nodes
     |> Enum.filter(fn n -> n.type == :match end)
     |> Enum.reduce(alive_ids, fn match, ids ->
-      bound_vars =
+      lhs_nodes =
         match.children
         |> List.first()
         |> List.wrap()
         |> Enum.flat_map(&Reach.IR.all_nodes/1)
+
+      var_names =
+        lhs_nodes
         |> Enum.filter(fn n -> n.type == :var and n.meta[:binding_role] == :definition end)
         |> Enum.map(& &1.meta[:name])
+
+      struct_var_names =
+        lhs_nodes
+        |> Enum.filter(fn n ->
+          n.type == :struct and match?({name, _, _} when is_atom(name), n.meta[:name])
+        end)
+        |> Enum.map(fn n -> elem(n.meta[:name], 0) end)
+
+      bound_vars = var_names ++ struct_var_names
 
       if Enum.any?(bound_vars, &MapSet.member?(alive_refs, &1)) do
         MapSet.put(ids, match.id)
@@ -910,6 +926,15 @@ defmodule Reach do
     Enum.reduce(all_nodes, alive_ids, fn node, ids ->
       expand_clause_pattern(node, ids)
     end)
+  end
+
+  defp expand_clause_pattern(%{type: t, meta: %{kind: :with_clause}} = node, ids)
+       when t in [:clause, :catch_clause, :rescue] do
+    if MapSet.member?(ids, node.id) do
+      add_all_descendant_ids(node, ids)
+    else
+      ids
+    end
   end
 
   defp expand_clause_pattern(%{type: t, children: children} = node, ids)

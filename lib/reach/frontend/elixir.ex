@@ -276,17 +276,27 @@ defmodule Reach.Frontend.Elixir do
     else_clauses = Keyword.get(opts, :else, [])
 
     clause_nodes =
-      Enum.map(clauses, fn {:<-, clause_meta, [pattern, expr]} ->
-        pattern_node = translate(pattern, counter, file)
-        expr_node = translate(expr, counter, file)
+      Enum.map(clauses, fn
+        {:<-, clause_meta, [pattern, expr]} ->
+          pattern_node = translate(pattern, counter, file)
+          expr_node = translate(expr, counter, file)
 
-        %Node{
-          id: Counter.next(counter),
-          type: :clause,
-          meta: %{kind: :with_clause},
-          children: [pattern_node, expr_node],
-          source_span: span_from_meta(clause_meta, file)
-        }
+          %Node{
+            id: Counter.next(counter),
+            type: :clause,
+            meta: %{kind: :with_clause},
+            children: [pattern_node, expr_node],
+            source_span: span_from_meta(clause_meta, file)
+          }
+
+        {_, bare_meta, _} = bare_expr ->
+          %Node{
+            id: Counter.next(counter),
+            type: :clause,
+            meta: %{kind: :with_clause},
+            children: [translate(bare_expr, counter, file)],
+            source_span: span_from_meta(bare_meta, file)
+          }
       end)
 
     body_node = translate(do_body, counter, file)
@@ -900,7 +910,8 @@ defmodule Reach.Frontend.Elixir do
   defp split_with_clauses(args) do
     Enum.split_while(args, fn
       {:<-, _, _} -> true
-      _ -> false
+      opts when is_list(opts) -> false
+      _ -> true
     end)
   end
 

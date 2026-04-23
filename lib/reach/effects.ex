@@ -569,6 +569,8 @@ defmodule Reach.Effects do
     Mix.Project,
     Mix,
     Agent,
+    Code,
+    Module,
     Node,
     Task,
     DynamicSupervisor,
@@ -682,6 +684,8 @@ defmodule Reach.Effects do
   defp pure_return_type?(nil), do: false
   defp pure_return_type?({:atom, _, :ok}), do: false
 
+  defp pure_return_type?({:type, _, :tuple, [{:atom, _, :ok} | _]}), do: false
+
   defp pure_return_type?({:type, _, type, _})
        when type in [
               :integer,
@@ -714,7 +718,11 @@ defmodule Reach.Effects do
 
   defp pure_return_type?(_), do: false
 
-  @effectful_in_pure_modules [{Enum, :each, 2}, {Enum, :each, 1}]
+  @effectful_in_pure_modules [
+    {Enum, :each, 2},
+    {Enum, :each, 1},
+    {:lists, :foreach, 2}
+  ]
 
   defp classify_pure(module, function, arity) do
     cond do
