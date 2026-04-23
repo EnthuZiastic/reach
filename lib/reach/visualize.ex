@@ -44,6 +44,11 @@ defmodule Reach.Visualize do
     end
   end
 
+  def extract_func_source(%{type: :function_def, meta: %{source: source}})
+      when is_binary(source) do
+    format_source(source)
+  end
+
   def extract_func_source(%{type: :function_def, source_span: %{file: file, start_line: start}})
       when is_binary(file) and is_integer(start) do
     with end_line when is_integer(end_line) <- find_end_line(file, start),
@@ -84,6 +89,7 @@ defmodule Reach.Visualize do
   defp call_graph_data(graph) do
     all_nodes = Reach.nodes(graph)
     call_graph = extract_call_graph(graph)
+    call_graph = add_cross_language_edges(call_graph, graph, all_nodes)
     module_name = detect_module(all_nodes)
 
     internal_funcs =
@@ -153,6 +159,52 @@ defmodule Reach.Visualize do
 
     %{modules: modules, edges: edges}
   end
+
+  defp add_cross_language_edges(call_graph, sdg_graph, all_nodes) do
+    sdg = Reach.to_graph(sdg_graph)
+    node_map = Map.new(all_nodes, &{&1.id, &1})
+
+    cross_edges =
+      Graph.edges(sdg)
+      |> Enum.filter(fn e ->
+        match?(:js_eval, e.label) or match?({:js_call, _}, e.label) or
+          match?({:beam_call, _}, e.label)
+      end)
+      |> Enum.flat_map(fn e ->
+        cross_edge_keys(Map.get(node_map, e.v1), Map.get(node_map, e.v2), e.label)
+      end)
+
+    Enum.reduce(cross_edges, call_graph, fn {from, to, label}, g ->
+      g
+      |> Graph.add_vertex(from)
+      |> Graph.add_vertex(to)
+      |> Graph.add_edge(from, to, label: label)
+    end)
+  end
+
+  defp cross_edge_keys(nil, _, _), do: []
+  defp cross_edge_keys(_, nil, _), do: []
+
+  defp cross_edge_keys(from, to, label) do
+    with from_key when from_key != nil <- func_key(from),
+         to_key when to_key != nil <- func_key(to) do
+      [{from_key, to_key, label}]
+    else
+      _ -> []
+    end
+  end
+
+  defp func_key(%{type: :function_def, meta: meta}) do
+    mod = meta[:module] || if meta[:language] == :javascript, do: :"<javascript>"
+    if mod, do: {mod, meta[:name], meta[:arity] || 0}
+  end
+
+  defp func_key(%{type: :call, meta: meta}) do
+    {meta[:module], meta[:function], meta[:arity] || 0}
+  end
+
+  defp func_key(%{type: :fn}), do: nil
+  defp func_key(_), do: nil
 
   defp garbage_call?(edge) do
     {_src_mod, _src_fn, _src_ar} = edge.v1
