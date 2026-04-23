@@ -16,6 +16,7 @@ if Code.ensure_loaded?(QuickBEAM) do
     def parse(source, opts \\ []) do
       file = Keyword.get(opts, :file, "nofile")
       counter = Keyword.get(opts, :counter, Counter.new())
+      source = prepare_source(source, file)
 
       with {:ok, rt} <- QuickBEAM.start(apis: false) do
         try do
@@ -29,6 +30,31 @@ if Code.ensure_loaded?(QuickBEAM) do
           QuickBEAM.stop(rt)
         end
       end
+    end
+
+    defp prepare_source(source, file) do
+      source
+      |> maybe_strip_types(file)
+      |> strip_module_syntax()
+    end
+
+    defp maybe_strip_types(source, file) do
+      if String.ends_with?(to_string(file), [".ts", ".tsx"]) and Code.ensure_loaded?(OXC) do
+        case OXC.transform(source, Path.basename(to_string(file)), sourcemap: false) do
+          {:ok, js} when is_binary(js) -> js
+          {:ok, %{code: js}} -> js
+          _ -> source
+        end
+      else
+        source
+      end
+    end
+
+    defp strip_module_syntax(source) do
+      source
+      |> String.replace(~r/^export default /m, "")
+      |> String.replace(~r/^export /m, "")
+      |> String.replace(~r/^import .+;?$/m, "")
     end
 
     @spec parse!(String.t(), keyword()) :: [Node.t()]
@@ -52,11 +78,38 @@ if Code.ensure_loaded?(QuickBEAM) do
     # --- Bytecode → IR translation ---
 
     defp translate_bytecode(bc, counter, file) do
-      Enum.map(bc.cpool, fn
-        %{opcodes: _} = func -> translate_function(func, counter, file)
-        _ -> nil
-      end)
-      |> Enum.reject(&is_nil/1)
+      nested =
+        Enum.map(bc.cpool, fn
+          %{opcodes: _} = func -> translate_function(func, counter, file)
+          _ -> nil
+        end)
+        |> Enum.reject(&is_nil/1)
+
+      if has_module_level_code?(bc) do
+        top = translate_function(%{bc | name: "<module>"}, counter, file)
+        [top | nested]
+      else
+        nested
+      end
+    end
+
+    defp has_module_level_code?(bc) do
+      bc.name in ["<eval>", nil, ""] and
+        Enum.any?(bc.opcodes, fn op ->
+          elem(op, 1) not in [
+            :check_define_var,
+            :define_func,
+            :fclosure,
+            :fclosure8,
+            :get_loc0,
+            :get_loc,
+            :return,
+            :set_loc_uninitialized,
+            :put_loc,
+            :put_loc0,
+            :put_loc1
+          ]
+        end)
     end
 
     defp translate_function(func, counter, file) do
@@ -259,16 +312,26 @@ if Code.ensure_loaded?(QuickBEAM) do
       {nodes, [var_ref(counter, String.to_atom(name), file, line) | stack]}
     end
 
+    defp translate_op({_, :push_empty_string}, nodes, stack, _ctx, counter, _, _),
+      do: {nodes, [literal(counter, "") | stack]}
+
+    defp translate_op({_, :push_this}, nodes, stack, _ctx, counter, file, line),
+      do: {nodes, [var_ref(counter, :this, file, line) | stack]}
+
+    defp translate_op({_, :is_undefined_or_null}, nodes, stack, _ctx, _counter, _file, _line),
+      do: {nodes, stack}
+
     # Closure variable access
     defp translate_op(
-           {_, :get_var_ref, idx},
+           {_, op, idx},
            nodes,
            stack,
            %{closures: closures} = _ctx,
            counter,
            file,
            line
-         ) do
+         )
+         when op in [:get_var_ref, :get_var_ref_check] do
       name = Map.get(closures, idx, :"_closure#{idx}")
       {nodes, [var_ref(counter, name, file, line) | stack]}
     end
