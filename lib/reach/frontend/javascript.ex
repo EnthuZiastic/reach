@@ -547,22 +547,7 @@ if Code.ensure_loaded?(QuickBEAM) do
         _ ->
           idx = loc_index(op, idx)
           name = Map.get(locals, idx, :"_local#{idx}")
-
-          case stack do
-            [value | rest] ->
-              match_node = %Node{
-                id: Counter.next(counter),
-                type: :match,
-                meta: %{},
-                children: [var_def(counter, name, file, line), value],
-                source_span: span(file, line, nil)
-              }
-
-              {[match_node | nodes], rest}
-
-            [] ->
-              {nodes, stack}
-          end
+          emit_assignment(nodes, stack, name, counter, file, line)
       end
     end
 
@@ -650,44 +635,14 @@ if Code.ensure_loaded?(QuickBEAM) do
 
     # Global variable write
     defp translate_op({_, :put_var, name}, nodes, stack, _ctx, counter, file, line) do
-      case stack do
-        [value | rest] ->
-          node = %Node{
-            id: Counter.next(counter),
-            type: :match,
-            meta: %{},
-            children: [var_def(counter, String.to_atom(name), file, line), value],
-            source_span: span(file, line, nil)
-          }
-
-          {[node | nodes], rest}
-
-        _ ->
-          {nodes, stack}
-      end
+      emit_assignment(nodes, stack, String.to_atom(name), counter, file, line)
     end
 
     # Argument mutation
     defp translate_op({_, op, idx}, nodes, stack, _ctx, counter, file, line)
          when op in [:put_arg, :put_arg0, :put_arg1, :put_arg2, :put_arg3] do
       idx = arg_index(op, idx)
-      name = :"arg#{idx}"
-
-      case stack do
-        [value | rest] ->
-          node = %Node{
-            id: Counter.next(counter),
-            type: :match,
-            meta: %{},
-            children: [var_def(counter, name, file, line), value],
-            source_span: span(file, line, nil)
-          }
-
-          {[node | nodes], rest}
-
-        _ ->
-          {nodes, stack}
-      end
+      emit_assignment(nodes, stack, :"arg#{idx}", counter, file, line)
     end
 
     # Variable access variants
@@ -769,15 +724,7 @@ if Code.ensure_loaded?(QuickBEAM) do
     defp translate_op({_, :get_array_el}, nodes, stack, _ctx, counter, file, line) do
       case stack do
         [index, arr | rest] ->
-          node = %Node{
-            id: Counter.next(counter),
-            type: :call,
-            meta: %{function: :"[]", kind: :field_access},
-            children: [arr, index],
-            source_span: span(file, line, nil)
-          }
-
-          {nodes, [node | rest]}
+          {nodes, [make_array_access(counter, arr, index, file, line) | rest]}
 
         _ ->
           {nodes, stack}
@@ -787,15 +734,7 @@ if Code.ensure_loaded?(QuickBEAM) do
     defp translate_op({_, :get_array_el2}, nodes, stack, _ctx, counter, file, line) do
       case stack do
         [index, arr | rest] ->
-          node = %Node{
-            id: Counter.next(counter),
-            type: :call,
-            meta: %{function: :"[]", kind: :field_access},
-            children: [arr, index],
-            source_span: span(file, line, nil)
-          }
-
-          {nodes, [node, arr | rest]}
+          {nodes, [make_array_access(counter, arr, index, file, line), arr | rest]}
 
         _ ->
           {nodes, stack}
@@ -897,22 +836,7 @@ if Code.ensure_loaded?(QuickBEAM) do
            line
          ) do
       name = Map.get(closures, idx, :"_closure#{idx}")
-
-      case stack do
-        [value | rest] ->
-          match_node = %Node{
-            id: Counter.next(counter),
-            type: :match,
-            meta: %{},
-            children: [var_def(counter, name, file, line), value],
-            source_span: span(file, line, nil)
-          }
-
-          {[match_node | nodes], rest}
-
-        [] ->
-          {nodes, stack}
-      end
+      emit_assignment(nodes, stack, name, counter, file, line)
     end
 
     # Binary operators
@@ -1304,6 +1228,34 @@ if Code.ensure_loaded?(QuickBEAM) do
     end
 
     # --- Helpers ---
+
+    defp emit_assignment(nodes, stack, name, counter, file, line) do
+      case stack do
+        [value | rest] ->
+          node = %Node{
+            id: Counter.next(counter),
+            type: :match,
+            meta: %{},
+            children: [var_def(counter, name, file, line), value],
+            source_span: span(file, line, nil)
+          }
+
+          {[node | nodes], rest}
+
+        [] ->
+          {nodes, stack}
+      end
+    end
+
+    defp make_array_access(counter, arr, index, file, line) do
+      %Node{
+        id: Counter.next(counter),
+        type: :call,
+        meta: %{function: :"[]", kind: :field_access},
+        children: [arr, index],
+        source_span: span(file, line, nil)
+      }
+    end
 
     defp literal(counter, value) do
       %Node{id: Counter.next(counter), type: :literal, meta: %{value: value}, children: []}
