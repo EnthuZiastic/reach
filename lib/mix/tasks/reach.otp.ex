@@ -30,7 +30,7 @@ defmodule Mix.Tasks.Reach.Otp do
     format = opts[:format] || "text"
 
     project = Project.load()
-    scope = if target_args != [], do: hd(target_args), else: nil
+    scope = List.first(target_args)
 
     result = analyze(project, scope)
 
@@ -383,25 +383,129 @@ defmodule Mix.Tasks.Reach.Otp do
   end
 
   defp find_supervision(nodes) do
-    nodes
-    |> Enum.filter(fn n ->
-      n.type == :function_def and n.meta[:name] == :init and n.meta[:arity] == 1 and
-        supervisor_init?(n)
-    end)
-    |> Enum.map(fn n ->
-      %{
-        module: n.meta[:module],
-        location: Format.location(n)
-      }
-    end)
+    init_supervisors =
+      nodes
+      |> Enum.filter(fn n ->
+        n.type == :function_def and n.meta[:name] == :init and n.meta[:arity] == 1 and
+          supervisor_init?(n)
+      end)
+      |> Enum.map(fn n ->
+        children = extract_supervisor_children(n)
+        %{module: n.meta[:module], location: Format.location(n), children: children}
+      end)
+
+    inline_supervisors =
+      nodes
+      |> Enum.filter(fn n ->
+        n.type == :call and n.meta[:module] == Supervisor and
+          n.meta[:function] == :start_link
+      end)
+      |> Enum.map(fn n ->
+        parent = find_containing_function(nodes, n.id)
+        children = if parent, do: extract_children_from_scope(parent, n), else: []
+        mod = (parent && parent.meta[:module]) || find_enclosing_module(nodes, n.id)
+
+        %{module: mod, location: Format.location(n), children: children}
+      end)
+
+    Enum.uniq_by(init_supervisors ++ inline_supervisors, & &1.module)
   end
 
   defp supervisor_init?(node) do
     node
     |> IR.all_nodes()
     |> Enum.any?(fn child ->
-      child.type == :call and child.meta[:function] in [:supervise, :init, :child_spec]
+      child.type == :call and
+        (child.meta[:function] in [:supervise, :init, :child_spec] or
+           (child.meta[:module] == Supervisor and child.meta[:function] == :start_link))
     end)
+  end
+
+  defp extract_supervisor_children(func_node) do
+    func_node
+    |> IR.all_nodes()
+    |> Enum.filter(&supervisor_start_link?/1)
+    |> Enum.flat_map(&extract_children_from_scope(func_node, &1))
+  end
+
+  defp supervisor_start_link?(%{type: :call, meta: %{module: Supervisor, function: :start_link}}),
+    do: true
+
+  defp supervisor_start_link?(_), do: false
+
+  defp extract_children_from_scope(func_node, call_node) do
+    all = IR.all_nodes(func_node)
+
+    case call_node.children do
+      [first_arg | _] -> resolve_child_list(first_arg, all)
+      _ -> []
+    end
+  end
+
+  defp resolve_child_list(%{type: :list, children: items}, _all) do
+    items |> Enum.map(&extract_child_module/1) |> Enum.reject(&is_nil/1)
+  end
+
+  defp resolve_child_list(%{type: :var, meta: %{name: var_name}}, all) do
+    resolve_var_to_list(all, var_name)
+  end
+
+  defp resolve_child_list(_, _), do: []
+
+  defp resolve_var_to_list(all_nodes, var_name) do
+    case Enum.find(all_nodes, fn n ->
+           n.type == :match and
+             match?(
+               [%{type: :var, meta: %{name: ^var_name, binding_role: :definition}} | _],
+               n.children
+             )
+         end) do
+      %{children: [_, %{type: :list, children: items}]} ->
+        Enum.map(items, &extract_child_module/1)
+
+      _ ->
+        []
+    end
+  end
+
+  defp extract_child_module(%{type: :literal, meta: %{value: mod}}) when is_atom(mod), do: mod
+  defp extract_child_module(%{type: :struct, meta: %{name: mod}}), do: mod
+
+  defp extract_child_module(%{type: :tuple, children: [first | _]}) do
+    extract_child_module(first)
+  end
+
+  defp extract_child_module(%{type: :call, meta: %{function: :__aliases__}, children: parts}) do
+    parts
+    |> Enum.map(fn
+      %{type: :literal, meta: %{value: v}} when is_atom(v) -> v
+      _ -> nil
+    end)
+    |> then(fn atoms ->
+      if Enum.all?(atoms, &is_atom/1), do: Module.concat(atoms)
+    end)
+  end
+
+  defp extract_child_module(%{type: :call, meta: %{module: mod}})
+       when is_atom(mod) and not is_nil(mod), do: mod
+
+  defp extract_child_module(_), do: nil
+
+  defp find_containing_function(nodes, target_id) do
+    Enum.find(nodes, fn n ->
+      n.type == :function_def and
+        target_id in Enum.map(IR.all_nodes(n), & &1.id)
+    end)
+  end
+
+  defp find_enclosing_module(nodes, target_id) do
+    case Enum.find(nodes, fn n ->
+           n.type == :module_def and
+             target_id in Enum.map(IR.all_nodes(n), & &1.id)
+         end) do
+      %{meta: %{name: name}} -> name
+      _ -> nil
+    end
   end
 
   defp render_text(result, opts) do
@@ -475,12 +579,15 @@ defmodule Mix.Tasks.Reach.Otp do
 
   defp render_supervision(supervision) do
     if supervision != [] do
-      IO.puts(Format.section("Supervisors"))
+      IO.puts(Format.section("Supervision tree"))
 
-      Enum.each(supervision, fn s ->
-        IO.puts("  #{s.module}  #{s.location}")
-      end)
+      Enum.each(supervision, &render_supervisor/1)
     end
+  end
+
+  defp render_supervisor(s) do
+    IO.puts("  #{Format.bright(inspect(s.module))}  #{s.location}")
+    Enum.each(s.children, fn child -> IO.puts("    └─ #{inspect(child)}") end)
   end
 
   defp action_label(:writes), do: Format.red("writes state")
