@@ -19,3 +19,5 @@ ex_pdg-*.tar
 priv/static/
 reach-*.tar
 Elixir.Test.beam
+reach_report/
+reach_report/

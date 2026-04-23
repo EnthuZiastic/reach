@@ -130,7 +130,7 @@ defmodule Reach.Visualize do
 
         %{
           id: format_module(mod),
-          name: format_module(mod),
+          name: display_module(mod),
           file: if(is_internal, do: detect_file(all_nodes), else: nil),
           functions:
             funcs
@@ -152,7 +152,7 @@ defmodule Reach.Visualize do
           id: "call_#{call_id(sm, sf, sa)}_#{call_id(tm, tf, ta)}",
           source: call_id(sm, sf, sa),
           target: call_id(tm, tf, ta),
-          color: if(tm == module_name, do: "#7c3aed", else: "#94a3b8")
+          color: edge_color(sm, tm, module_name)
         }
       end)
       |> Enum.uniq_by(& &1.id)
@@ -180,6 +180,14 @@ defmodule Reach.Visualize do
       |> Graph.add_vertex(to)
       |> Graph.add_edge(from, to, label: label)
     end)
+  end
+
+  defp edge_color(sm, tm, module_name) do
+    cond do
+      sm == :"<javascript>" or tm == :"<javascript>" -> "#f97316"
+      tm == module_name -> "#7c3aed"
+      true -> "#94a3b8"
+    end
   end
 
   defp cross_edge_keys(nil, _, _), do: []
@@ -267,6 +275,9 @@ defmodule Reach.Visualize do
   defp format_module(nil), do: "_"
   defp format_module(mod) when is_atom(mod), do: inspect(mod)
   defp format_module(mod), do: inspect(mod)
+
+  defp display_module(:"<javascript>"), do: "JavaScript"
+  defp display_module(mod), do: format_module(mod)
 
   # ── Data Flow ──
 
