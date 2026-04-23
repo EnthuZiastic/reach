@@ -103,6 +103,7 @@ defmodule Reach do
     case language do
       :gleam -> parse_file_and_build(&Frontend.Gleam.parse_file/2, path, opts)
       :erlang -> parse_file_and_build(&Frontend.Erlang.parse_file/2, path, opts)
+      :javascript -> parse_js_and_build(path, opts)
       _elixir -> read_and_build_elixir(path, opts)
     end
   end
@@ -1147,10 +1148,19 @@ defmodule Reach do
     end
   end
 
+  defp parse_js_and_build(path, opts) do
+    if Code.ensure_loaded?(Frontend.JavaScript) do
+      parse_file_and_build(&Frontend.JavaScript.parse_file/2, path, opts)
+    else
+      {:error, :quickbeam_not_available}
+    end
+  end
+
   defp language_from_extension(path) do
     case Path.extname(path) do
       ext when ext in [".erl", ".hrl"] -> :erlang
       ".gleam" -> :gleam
+      ext when ext in [".js", ".ts", ".tsx", ".jsx"] -> :javascript
       _ -> :elixir
     end
   end

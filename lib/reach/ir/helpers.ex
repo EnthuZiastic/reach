@@ -31,6 +31,7 @@ defmodule Reach.IR.Helpers do
     case Path.extname(path) do
       ext when ext in [".erl", ".hrl"] -> :erlang
       ".gleam" -> :gleam
+      ext when ext in [".js", ".ts", ".tsx", ".jsx"] -> :javascript
       _ -> :elixir
     end
   end

@@ -192,6 +192,7 @@ defmodule Reach.Project do
           case language do
             :gleam -> Frontend.Gleam.parse_file(path, file: path)
             :erlang -> Frontend.Erlang.parse_file(path, file: path)
+            :javascript -> parse_js_file(path, counter)
             :elixir -> parse_elixir_file(path, counter)
           end
 
@@ -217,6 +218,14 @@ defmodule Reach.Project do
     case File.read(path) do
       {:ok, source} -> Frontend.Elixir.parse(source, file: path, counter: counter)
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp parse_js_file(path, counter) do
+    if Code.ensure_loaded?(Frontend.JavaScript) do
+      Frontend.JavaScript.parse_file(path, counter: counter)
+    else
+      {:error, :quickbeam_not_available}
     end
   end
 
