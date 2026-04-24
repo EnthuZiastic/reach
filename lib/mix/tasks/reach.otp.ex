@@ -45,12 +45,14 @@ defmodule Mix.Tasks.Reach.Otp do
     nodes = Map.values(project.nodes)
 
     behaviours = find_gen_servers(nodes, scope)
+    state_machines = find_gen_statems(nodes, scope)
     hidden_coupling = find_hidden_coupling(nodes)
     missing_handlers = find_missing_handlers(nodes)
     supervision = find_supervision(nodes)
 
     %{
       behaviours: behaviours,
+      state_machines: state_machines,
       hidden_coupling: hidden_coupling,
       missing_handlers: missing_handlers,
       supervision: supervision
@@ -74,6 +76,24 @@ defmodule Mix.Tasks.Reach.Otp do
           callbacks: callbacks,
           state_transforms: state_transforms
         }
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp find_gen_statems(nodes, scope) do
+    nodes
+    |> Enum.filter(fn n ->
+      n.type == :module_def and
+        (!scope || (n.meta[:name] && to_string(n.meta[:name]) =~ scope))
+    end)
+    |> Enum.map(fn mod_node ->
+      children = [mod_node | IR.all_nodes(mod_node)]
+      analysis = Reach.OTP.analyze_gen_statem(children)
+
+      if analysis do
+        location = Format.location(mod_node)
+        Map.merge(analysis, %{module: mod_node.meta[:name], location: location})
       end
     end)
     |> Enum.reject(&is_nil/1)
@@ -511,11 +531,12 @@ defmodule Mix.Tasks.Reach.Otp do
   defp render_text(result, opts) do
     IO.puts(Format.header("OTP Analysis"))
 
-    if result.behaviours == [] do
+    if result.behaviours == [] and result.state_machines == [] do
       IO.puts("No OTP behaviours detected.\n")
     else
       graph_mode = opts[:graph] || false
       Enum.each(result.behaviours, &render_behaviour(&1, graph_mode))
+      Enum.each(result.state_machines, &render_state_machine/1)
     end
 
     render_ets_coupling(result.hidden_coupling.ets)
@@ -596,11 +617,71 @@ defmodule Mix.Tasks.Reach.Otp do
   defp action_label(:passes_through), do: Format.faint("passes through")
   defp action_label(:unknown), do: Format.faint("no state access")
 
+  defp render_state_machine(sm) do
+    mode_label = sm.callback_mode |> to_string() |> String.replace("_", " ")
+    IO.puts(Format.section("#{sm.module} #{Format.faint("(gen_statem, #{mode_label})")}"))
+
+    render_init_state(sm.init_state)
+    render_statem_states(sm.states)
+    render_statem_transitions(sm.transitions)
+  end
+
+  defp render_init_state(nil), do: :ok
+
+  defp render_init_state(states) when is_list(states) do
+    labels = Enum.map_join(states, " | ", &Format.bright(to_string(&1)))
+    IO.puts("  Initial state: #{labels}")
+  end
+
+  defp render_init_state(state),
+    do: IO.puts("  Initial state: #{Format.bright(to_string(state))}")
+
+  defp render_statem_states(states) do
+    IO.puts("  States:")
+
+    states
+    |> Enum.sort_by(fn {name, _} -> to_string(name) end)
+    |> Enum.each(fn {state_name, info} ->
+      event_types = info.events |> Enum.map(& &1.event_type) |> Enum.uniq()
+      events_str = Enum.map_join(event_types, ", ", &format_event_type/1)
+      IO.puts("    #{Format.bright(to_string(state_name))}  #{Format.faint(events_str)}")
+    end)
+  end
+
+  defp render_statem_transitions([]), do: :ok
+
+  defp render_statem_transitions(transitions) do
+    IO.puts("  Transitions:")
+
+    transitions
+    |> Enum.uniq_by(fn t -> {t.from, t.to} end)
+    |> Enum.sort_by(fn t -> {to_string(t.from), to_string(t.to)} end)
+    |> Enum.each(fn t ->
+      trigger = if t.trigger, do: " #{Format.faint(format_event_type(t.trigger))}", else: ""
+      IO.puts("    #{to_string(t.from)} → #{Format.bright(to_string(t.to))}#{trigger}")
+    end)
+  end
+
+  defp format_event_type(:cast), do: "cast"
+  defp format_event_type(:info), do: "info"
+  defp format_event_type(:internal), do: "internal"
+  defp format_event_type(:any), do: "*"
+  defp format_event_type(:unknown), do: "?"
+  defp format_event_type({:call, _}), do: "call"
+  defp format_event_type({:timeout, name}), do: "timeout:#{name}"
+  defp format_event_type(other), do: to_string(other)
+
   defp render_oneline(result) do
     Enum.each(result.behaviours, fn gs ->
       Enum.each(gs.state_transforms, fn t ->
         {name, arity} = t.callback
         IO.puts("#{gs.module} #{name}/#{arity} #{t.action} #{t.location}")
+      end)
+    end)
+
+    Enum.each(result.state_machines, fn sm ->
+      Enum.each(sm.transitions, fn t ->
+        IO.puts("#{sm.module} #{t.from}→#{t.to} #{format_event_type(t.trigger || :unknown)}")
       end)
     end)
 

@@ -383,4 +383,184 @@ defmodule Reach.OTPTest do
       assert otp_labels != [] or true
     end
   end
+
+  describe "gen_statem analysis" do
+    test "detects gen_statem from @behaviour attribute" do
+      nodes =
+        IR.from_string!("""
+        defmodule MyStatem do
+          @behaviour :gen_statem
+
+          def callback_mode, do: :state_functions
+
+          def init(opts), do: {:ok, :idle, opts}
+
+          def idle(:cast, :start, data) do
+            {:next_state, :running, data}
+          end
+
+          def running(:cast, :stop, data) do
+            {:next_state, :idle, data}
+          end
+        end
+        """)
+
+      assert OTP.detect_behaviour(nodes) == :gen_statem
+    end
+
+    test "detects gen_statem from callback_mode function" do
+      nodes =
+        IR.from_string!("""
+        defmodule MyStatem2 do
+          def callback_mode, do: :state_functions
+
+          def init(opts), do: {:ok, :idle, opts}
+
+          def idle(:info, msg, data) do
+            {:keep_state, data}
+          end
+        end
+        """)
+
+      assert OTP.detect_behaviour(nodes) == :gen_statem
+    end
+
+    test "analyzes state_functions mode" do
+      nodes =
+        IR.from_string!("""
+        defmodule ConnectionFSM do
+          @behaviour :gen_statem
+
+          def callback_mode, do: :state_functions
+
+          def init(_opts), do: {:ok, :disconnected, %{}}
+
+          def disconnected(:cast, :connect, data) do
+            {:next_state, :connecting, data}
+          end
+
+          def connecting(:info, {:connected, socket}, data) do
+            {:next_state, :connected, Map.put(data, :socket, socket)}
+          end
+
+          def connecting(:info, {:error, _reason}, data) do
+            {:next_state, :disconnected, data}
+          end
+
+          def connected(:cast, :disconnect, data) do
+            {:next_state, :disconnected, data}
+          end
+
+          def connected(:info, {:data, payload}, data) do
+            {:keep_state, Map.update(data, :buffer, [payload], &[payload | &1])}
+          end
+        end
+        """)
+
+      result = OTP.analyze_gen_statem(nodes)
+
+      assert result.callback_mode == :state_functions
+      assert result.init_state == :disconnected
+      assert Map.has_key?(result.states, :disconnected)
+      assert Map.has_key?(result.states, :connecting)
+      assert Map.has_key?(result.states, :connected)
+
+      transitions = Enum.uniq_by(result.transitions, fn t -> {t.from, t.to} end)
+      from_to = Enum.map(transitions, fn t -> {t.from, t.to} end) |> MapSet.new()
+      assert {:disconnected, :connecting} in from_to
+      assert {:connecting, :connected} in from_to
+      assert {:connecting, :disconnected} in from_to
+      assert {:connected, :disconnected} in from_to
+    end
+
+    test "analyzes handle_event_function mode" do
+      nodes =
+        IR.from_string!("""
+        defmodule SingleStateFSM do
+          @behaviour :gen_statem
+
+          def callback_mode, do: :handle_event_function
+
+          @state :active
+
+          def init(_), do: {:ok, :active, %{}}
+
+          def handle_event(:cast, :ping, :active, data) do
+            {:keep_state, data}
+          end
+
+          def handle_event({:call, from}, :get, :active, data) do
+            {:keep_state, data, [{:reply, from, data}]}
+          end
+        end
+        """)
+
+      result = OTP.analyze_gen_statem(nodes)
+
+      assert result.callback_mode == :handle_event_function
+      assert result.init_state == :active
+      assert Map.has_key?(result.states, :active)
+    end
+
+    test "resolves module attributes in state patterns" do
+      nodes =
+        IR.from_string!("""
+        defmodule AttrStatem do
+          @behaviour :gen_statem
+
+          @state :connected
+
+          def callback_mode, do: :handle_event_function
+
+          def init(_), do: {:ok, @state, %{}}
+
+          def handle_event(:info, msg, @state, data) do
+            {:keep_state, data}
+          end
+        end
+        """)
+
+      result = OTP.analyze_gen_statem(nodes)
+      assert Map.has_key?(result.states, :connected)
+      assert result.init_state == :connected
+    end
+
+    test "extracts multiple init states from branching init" do
+      nodes =
+        IR.from_string!("""
+        defmodule BranchInit do
+          @behaviour :gen_statem
+
+          def callback_mode, do: :state_functions
+
+          def init(opts) do
+            if opts[:sync] do
+              {:ok, :ready, %{}}
+            else
+              {:ok, :connecting, %{}}
+            end
+          end
+
+          def connecting(:info, _, data), do: {:next_state, :ready, data}
+          def ready(:cast, _, data), do: {:keep_state, data}
+        end
+        """)
+
+      result = OTP.analyze_gen_statem(nodes)
+      assert is_list(result.init_state)
+      assert :ready in result.init_state
+      assert :connecting in result.init_state
+    end
+
+    test "returns nil for non-gen_statem modules" do
+      nodes =
+        IR.from_string!("""
+        defmodule PlainModule do
+          def foo(x), do: x + 1
+        end
+        """)
+
+      assert OTP.analyze_gen_statem(nodes) == nil
+    end
+  end
 end
