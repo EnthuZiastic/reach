@@ -46,14 +46,15 @@ defmodule Mix.Tasks.Reach.Otp do
 
   defp analyze(project, scope) do
     nodes = Map.values(project.nodes)
+    all_ir = Enum.flat_map(nodes, &IR.all_nodes/1)
 
     behaviours = find_gen_servers(nodes, scope)
-    state_machines = find_gen_statems(nodes, scope)
+    state_machines = find_gen_statems(all_ir, scope)
     hidden_coupling = find_hidden_coupling(nodes)
     missing_handlers = find_missing_handlers(nodes)
     supervision = find_supervision(nodes)
-    dead_replies = DeadReply.find_dead_replies(nodes)
-    cross_process = CrossProcess.find_cross_process_coupling(nodes)
+    dead_replies = DeadReply.find_dead_replies(nodes, all_nodes: all_ir)
+    cross_process = CrossProcess.find_cross_process_coupling(nodes, all_nodes: all_ir)
 
     %{
       behaviours: behaviours,

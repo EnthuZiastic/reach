@@ -17,16 +17,14 @@ defmodule Reach.OTP.CrossProcess do
   Builds a per-module effect summary: which ETS tables, pdict keys,
   and other processes each module touches.
   """
-  @spec build_effect_summaries([Node.t()]) :: %{module() => effect_summary()}
-  def build_effect_summaries(nodes) do
-    nodes
-    |> Enum.flat_map(&IR.all_nodes/1)
+  @spec build_effect_summaries([Node.t()], keyword()) :: %{module() => effect_summary()}
+  def build_effect_summaries(nodes, opts \\ []) do
+    all = Keyword.get_lazy(opts, :all_nodes, fn -> Enum.flat_map(nodes, &IR.all_nodes/1) end)
+
+    all
     |> Enum.filter(&(&1.type == :module_def))
     |> Map.new(fn mod_node ->
-      mod_name = mod_node.meta[:name]
-      all = IR.all_nodes(mod_node)
-
-      {mod_name, summarize_effects(mod_name, all)}
+      {mod_node.meta[:name], summarize_effects(mod_node.meta[:name], IR.all_nodes(mod_node))}
     end)
   end
 
@@ -34,16 +32,19 @@ defmodule Reach.OTP.CrossProcess do
   Finds cross-process coupling: when module A calls GenServer.call(B, ...)
   and module B touches ETS tables or pdict keys that module A also uses.
   """
-  @spec find_cross_process_coupling([Node.t()]) :: [map()]
-  def find_cross_process_coupling(nodes) do
-    summaries = build_effect_summaries(nodes)
-    all_nodes = Enum.flat_map(nodes, &IR.all_nodes/1)
+  @spec find_cross_process_coupling([Node.t()], keyword()) :: [map()]
+  def find_cross_process_coupling(nodes, opts \\ []) do
+    all_nodes =
+      Keyword.get_lazy(opts, :all_nodes, fn -> Enum.flat_map(nodes, &IR.all_nodes/1) end)
+
+    summaries = build_effect_summaries(nodes, all_nodes: all_nodes)
     module_nodes = Enum.filter(all_nodes, &(&1.type == :module_def))
+    module_index = build_module_index(module_nodes)
 
     gs_calls = Enum.filter(all_nodes, &genserver_send?/1)
 
     Enum.flat_map(gs_calls, fn call ->
-      caller_mod = find_enclosing_module(module_nodes, call.id)
+      caller_mod = Map.get(module_index, call.id)
       callee_mod = resolve_call_target(call)
 
       if caller_mod && callee_mod && caller_mod != callee_mod do
@@ -225,12 +226,12 @@ defmodule Reach.OTP.CrossProcess do
     ets_findings ++ pdict_findings
   end
 
-  defp find_enclosing_module(module_nodes, target_id) do
-    Enum.find_value(module_nodes, fn n ->
-      if target_id in Enum.map(IR.all_nodes(n), & &1.id) do
-        n.meta[:name]
-      end
-    end)
+  defp build_module_index(module_nodes) do
+    for mod <- module_nodes,
+        node <- IR.all_nodes(mod),
+        into: %{} do
+      {node.id, mod.meta[:name]}
+    end
   end
 
   defp location(%{source_span: %{file: file, start_line: line}}), do: "#{file}:#{line}"

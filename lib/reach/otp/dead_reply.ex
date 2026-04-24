@@ -11,9 +11,11 @@ defmodule Reach.OTP.DeadReply do
   nobody uses — the call could be a cast instead, or the handle_call
   could return a cheaper reply.
   """
-  @spec find_dead_replies([Node.t()]) :: [map()]
-  def find_dead_replies(nodes) do
-    all_nodes = Enum.flat_map(nodes, &IR.all_nodes/1)
+  @spec find_dead_replies([Node.t()], keyword()) :: [map()]
+  def find_dead_replies(nodes, opts \\ []) do
+    all_nodes =
+      Keyword.get_lazy(opts, :all_nodes, fn -> Enum.flat_map(nodes, &IR.all_nodes/1) end)
+
     parent_map = build_parent_map(all_nodes)
 
     all_nodes
