@@ -192,7 +192,8 @@ defmodule Mix.Tasks.Reach.Modules do
   defp complexity_color(c), do: to_string(c)
 
   defp render_text(modules) do
-    IO.puts(Format.header("Modules (#{length(modules)})"))
+    count = length(modules)
+    IO.puts(Format.header("Modules (#{count})"))
 
     Enum.each(modules, fn m ->
       behaviours =
@@ -224,7 +225,7 @@ defmodule Mix.Tasks.Reach.Modules do
     total_complex = Enum.sum(Enum.map(modules, & &1.total_complexity))
 
     IO.puts(
-      "#{length(modules)} modules, #{total_pub} public + #{total_priv} private functions, total complexity #{total_complex}"
+      "#{count} modules, #{total_pub} public + #{total_priv} private functions, total complexity #{total_complex}"
     )
   end
 end

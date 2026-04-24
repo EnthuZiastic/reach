@@ -81,9 +81,10 @@ defmodule Mix.Tasks.Reach.Deps do
     nodes = project.nodes
     {_mod, fun, arity} = target
 
+    all_func_defs = Map.values(nodes)
+
     target_calls =
-      nodes
-      |> Map.values()
+      all_func_defs
       |> Enum.filter(fn n ->
         n.type == :function_def and
           n.meta[:name] == fun and n.meta[:arity] == arity
@@ -92,8 +93,7 @@ defmodule Mix.Tasks.Reach.Deps do
       |> Enum.filter(fn n -> n.type == :call and Reach.Effects.classify(n) in [:write, :read] end)
       |> Enum.map(& &1.meta[:function])
 
-    nodes
-    |> Map.values()
+    all_func_defs
     |> Enum.filter(fn n ->
       n.type == :function_def and {n.meta[:name], n.meta[:arity]} != {fun, arity} and
         n

@@ -230,7 +230,6 @@ defmodule Reach.Visualize do
   defp func_key(_), do: nil
 
   defp garbage_call?(edge) do
-    {_src_mod, _src_fn, _src_ar} = edge.v1
     {tgt_mod, tgt_fn, tgt_ar} = edge.v2
 
     cond do

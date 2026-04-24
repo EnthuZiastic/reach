@@ -121,12 +121,14 @@ defmodule Reach.Frontend.Gleam do
 
     body_nodes = translate_body(body, counter, file, offsets)
 
+    func_span = span(offsets, loc, file)
+
     clause = %Node{
       id: Counter.next(counter),
       type: :clause,
       meta: %{kind: :function_clause},
       children: param_nodes ++ body_nodes,
-      source_span: span(offsets, loc, file)
+      source_span: func_span
     }
 
     %Node{
@@ -138,7 +140,7 @@ defmodule Reach.Frontend.Gleam do
         publicity: publicity
       },
       children: [clause],
-      source_span: span(offsets, loc, file)
+      source_span: func_span
     }
   end
 
@@ -444,12 +446,14 @@ defmodule Reach.Frontend.Gleam do
 
     body_nodes = translate_body(body, counter, file, offsets)
 
+    fn_span = span(offsets, loc, file)
+
     clause = %Node{
       id: Counter.next(counter),
       type: :clause,
       meta: %{index: 0, kind: :fn_clause},
       children: param_nodes ++ body_nodes,
-      source_span: span(offsets, loc, file)
+      source_span: fn_span
     }
 
     %Node{
@@ -457,7 +461,7 @@ defmodule Reach.Frontend.Gleam do
       type: :fn,
       meta: %{},
       children: [clause],
-      source_span: span(offsets, loc, file)
+      source_span: fn_span
     }
   end
 
@@ -682,13 +686,14 @@ defmodule Reach.Frontend.Gleam do
 
   defp translate_pattern({:pattern_assignment, loc, pattern, name}, counter, file, offsets) do
     inner = translate_pattern(pattern, counter, file, offsets)
+    pat_span = span(offsets, loc, file)
 
     var = %Node{
       id: Counter.next(counter),
       type: :var,
       meta: %{name: String.to_atom(name), binding_role: :definition},
       children: [],
-      source_span: span(offsets, loc, file)
+      source_span: pat_span
     }
 
     %Node{
@@ -696,7 +701,7 @@ defmodule Reach.Frontend.Gleam do
       type: :match,
       meta: %{},
       children: [inner, var],
-      source_span: span(offsets, loc, file)
+      source_span: pat_span
     }
   end
 

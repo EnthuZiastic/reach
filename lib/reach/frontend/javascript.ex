@@ -274,6 +274,7 @@ if Code.ensure_loaded?(QuickBEAM) do
 
       {true_nodes, _} = run_block(true_ops, body_stack, env, line)
       {false_nodes, _} = run_block(false_ops, body_stack, env, line)
+      case_span = span(file, line, nil)
 
       case_node = %Node{
         id: Counter.next(counter),
@@ -286,17 +287,17 @@ if Code.ensure_loaded?(QuickBEAM) do
             type: :clause,
             meta: %{kind: :true_branch},
             children: true_nodes,
-            source_span: span(file, line, nil)
+            source_span: case_span
           },
           %Node{
             id: Counter.next(counter),
             type: :clause,
             meta: %{kind: :false_branch},
             children: false_nodes,
-            source_span: span(file, line, nil)
+            source_span: case_span
           }
         ],
-        source_span: span(file, line, nil)
+        source_span: case_span
       }
 
       visited = visited |> mark_visited(true_ops) |> mark_visited(false_ops)

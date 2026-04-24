@@ -363,8 +363,9 @@ defmodule Reach.Visualize.ControlFlow do
   end
 
   defp build_viz_blocks(ir_vertices, cfg, _vertex_ranges, branch_vertices) do
-    in_degree = Enum.frequencies_by(Graph.edges(cfg), & &1.v2)
-    out_edges_by = Enum.group_by(Graph.edges(cfg), & &1.v1)
+    edges = Graph.edges(cfg)
+    in_degree = Enum.frequencies_by(edges, & &1.v2)
+    out_edges_by = Enum.group_by(edges, & &1.v1)
 
     ir_vertices
     |> Enum.reduce([], fn v, blocks ->

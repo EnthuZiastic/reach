@@ -275,21 +275,18 @@ defmodule Reach.Project do
         {mod, %{sdg | graph: graph}}
       end)
 
-    # Merge all graphs
+    sdg_list = Map.values(module_sdgs)
+
     merged_graph =
-      module_sdgs
-      |> Map.values()
+      sdg_list
       |> Enum.map(& &1.graph)
       |> Reach.Graph.merge()
 
     merged_nodes =
-      module_sdgs
-      |> Map.values()
-      |> Enum.reduce(%{}, fn sdg, acc -> Map.merge(acc, sdg.nodes) end)
+      Enum.reduce(sdg_list, %{}, fn sdg, acc -> Map.merge(acc, sdg.nodes) end)
 
     merged_call_graph =
-      module_sdgs
-      |> Map.values()
+      sdg_list
       |> Enum.map(& &1.call_graph)
       |> Reach.Graph.merge()
 
