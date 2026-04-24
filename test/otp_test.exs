@@ -3,6 +3,8 @@ defmodule Reach.OTPTest do
 
   alias Reach.IR
   alias Reach.OTP
+  alias Reach.OTP.CrossProcess
+  alias Reach.OTP.DeadReply
   alias Reach.OTP.GenServer, as: OTPGenServer
   alias Reach.OTP.GenStatem
 
@@ -564,6 +566,168 @@ defmodule Reach.OTPTest do
         """)
 
       assert GenStatem.analyze(nodes) == nil
+    end
+  end
+
+  describe "dead GenServer reply detection" do
+    test "detects discarded GenServer.call reply" do
+      nodes =
+        IR.from_string!("""
+        defmodule DiscardedReply do
+          def fire(pid) do
+            GenServer.call(pid, :do_thing)
+            :ok
+          end
+        end
+        """)
+
+      findings = DeadReply.find_dead_replies(nodes)
+      assert length(findings) == 1
+      assert hd(findings).target == :pid
+    end
+
+    test "does not flag used GenServer.call reply (match)" do
+      nodes =
+        IR.from_string!("""
+        defmodule UsedReply do
+          def get(pid) do
+            result = GenServer.call(pid, :get)
+            process(result)
+          end
+
+          defp process(x), do: x
+        end
+        """)
+
+      findings = DeadReply.find_dead_replies(nodes)
+      assert findings == []
+    end
+
+    test "does not flag GenServer.call as tail expression" do
+      nodes =
+        IR.from_string!("""
+        defmodule TailReply do
+          def get(pid) do
+            GenServer.call(pid, :get)
+          end
+        end
+        """)
+
+      findings = DeadReply.find_dead_replies(nodes)
+      assert findings == []
+    end
+
+    test "does not flag piped GenServer.call" do
+      nodes =
+        IR.from_string!("""
+        defmodule PipedReply do
+          def get(pid) do
+            GenServer.call(pid, :get) |> process()
+          end
+
+          defp process(x), do: x
+        end
+        """)
+
+      findings = DeadReply.find_dead_replies(nodes)
+      assert findings == []
+    end
+
+    test "does not flag case'd GenServer.call" do
+      nodes =
+        IR.from_string!("""
+        defmodule CasedReply do
+          def get(pid) do
+            case GenServer.call(pid, :get) do
+              :ok -> :yes
+              _ -> :no
+            end
+          end
+        end
+        """)
+
+      findings = DeadReply.find_dead_replies(nodes)
+      assert findings == []
+    end
+  end
+
+  describe "cross-process coupling" do
+    test "detects shared ETS table between caller and callee" do
+      nodes =
+        IR.from_string!("""
+        defmodule Producer do
+          def produce do
+            :ets.insert(:shared_cache, {:key, :value})
+            GenServer.call(Consumer, :process)
+          end
+        end
+
+        defmodule Consumer do
+          def handle_call(:process, _from, state) do
+            data = :ets.lookup(:shared_cache, :key)
+            {:reply, data, state}
+          end
+        end
+        """)
+
+      findings = CrossProcess.find_cross_process_coupling(nodes)
+      assert findings != []
+      finding = hd(findings)
+      assert finding.kind == :cross_process_ets
+      assert finding.caller == Producer
+      assert finding.callee == Consumer
+      assert finding.resource == {:ets, :shared_cache}
+    end
+
+    test "no coupling when modules use different ETS tables" do
+      nodes =
+        IR.from_string!("""
+        defmodule WriterA do
+          def write do
+            :ets.insert(:table_a, {:key, :value})
+            GenServer.call(ReaderB, :read)
+          end
+        end
+
+        defmodule ReaderB do
+          def handle_call(:read, _from, state) do
+            data = :ets.lookup(:table_b, :key)
+            {:reply, data, state}
+          end
+        end
+        """)
+
+      findings = CrossProcess.find_cross_process_coupling(nodes)
+      assert findings == []
+    end
+
+    test "builds effect summaries per module" do
+      nodes =
+        IR.from_string!("""
+        defmodule MyServer do
+          def init(_) do
+            :ets.new(:cache, [:named_table])
+            Process.put(:started, true)
+            {:ok, %{}}
+          end
+
+          def handle_call(:get, _from, state) do
+            data = :ets.lookup(:cache, :key)
+            {:reply, data, state}
+          end
+
+          def handle_cast(:put, state) do
+            :ets.insert(:cache, {:key, :value})
+            {:noreply, state}
+          end
+        end
+        """)
+
+      summaries = CrossProcess.build_effect_summaries(nodes)
+      summary = summaries[MyServer]
+      assert :cache in summary.ets_reads
+      assert :cache in summary.ets_writes
+      assert :started in summary.pdict_writes
     end
   end
 end

@@ -23,6 +23,8 @@ defmodule Mix.Tasks.Reach.Otp do
   alias Reach.CLI.Format
   alias Reach.CLI.Project
   alias Reach.IR
+  alias Reach.OTP.CrossProcess
+  alias Reach.OTP.DeadReply
   alias Reach.OTP.GenStatem
 
   @impl Mix.Task
@@ -50,13 +52,17 @@ defmodule Mix.Tasks.Reach.Otp do
     hidden_coupling = find_hidden_coupling(nodes)
     missing_handlers = find_missing_handlers(nodes)
     supervision = find_supervision(nodes)
+    dead_replies = DeadReply.find_dead_replies(nodes)
+    cross_process = CrossProcess.find_cross_process_coupling(nodes)
 
     %{
       behaviours: behaviours,
       state_machines: state_machines,
       hidden_coupling: hidden_coupling,
       missing_handlers: missing_handlers,
-      supervision: supervision
+      supervision: supervision,
+      dead_replies: dead_replies,
+      cross_process: cross_process
     }
   end
 
@@ -543,6 +549,8 @@ defmodule Mix.Tasks.Reach.Otp do
     render_ets_coupling(result.hidden_coupling.ets)
     render_pdict_coupling(result.hidden_coupling.process_dict)
     render_missing_handlers(result.missing_handlers)
+    render_dead_replies(result.dead_replies)
+    render_cross_process(result.cross_process)
     render_supervision(result.supervision)
   end
 
@@ -598,6 +606,32 @@ defmodule Mix.Tasks.Reach.Otp do
       end)
     end
   end
+
+  defp render_dead_replies([]), do: :ok
+
+  defp render_dead_replies(dead_replies) do
+    IO.puts(Format.section("Dead GenServer replies"))
+
+    Enum.each(dead_replies, fn dr ->
+      target = if dr.target, do: " to #{inspect(dr.target)}", else: ""
+      IO.puts("  #{dr.location}  #{Format.warning("GenServer.call#{target} reply discarded")}")
+    end)
+  end
+
+  defp render_cross_process([]), do: :ok
+
+  defp render_cross_process(findings) do
+    IO.puts(Format.section("Cross-process coupling"))
+
+    Enum.each(findings, fn f ->
+      resource_label = format_resource(f.resource)
+      IO.puts("  #{f.location}  #{inspect(f.caller)} → #{inspect(f.callee)}")
+      IO.puts("    #{Format.warning("shared #{resource_label}")}")
+    end)
+  end
+
+  defp format_resource({:ets, table}), do: "ETS :#{table}"
+  defp format_resource({:pdict, key}), do: "process dict :#{key}"
 
   defp render_supervision(supervision) do
     if supervision != [] do
@@ -688,6 +722,17 @@ defmodule Mix.Tasks.Reach.Otp do
 
     Enum.each(result.missing_handlers, fn h ->
       IO.puts("unmatched:#{h.location}:#{h.message}")
+    end)
+
+    Enum.each(result.dead_replies, fn dr ->
+      target = if dr.target, do: inspect(dr.target), else: "?"
+      IO.puts("dead_reply:#{dr.location}:#{target}")
+    end)
+
+    Enum.each(result.cross_process, fn f ->
+      IO.puts(
+        "coupling:#{f.location}:#{inspect(f.caller)}→#{inspect(f.callee)}:#{format_resource(f.resource)}"
+      )
     end)
   end
 end
