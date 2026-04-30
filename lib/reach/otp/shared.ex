@@ -4,12 +4,15 @@ defmodule Reach.OTP.Shared do
   alias Reach.IR.Node
 
   @doc """
-  Resolves a target IR node to a module atom.
+  Resolves a target IR node to a statically known atom.
 
-  Handles `:literal` atoms and `:__aliases__` call chains; returns `nil`
-  when the target is not a statically resolvable module reference.
+  Handles `:literal` atoms (which may be any atom, not necessarily a module)
+  and `:__aliases__` call chains (which always concat to a module). Returns
+  `nil` when the target is not statically resolvable. Callers that need a
+  module must validate the result against their context (the `:literal`
+  branch will happily return `:ok`, `:error`, etc.).
   """
-  @spec resolve_target(Node.t()) :: module() | nil
+  @spec resolve_target(Node.t()) :: atom() | nil
   def resolve_target(%Node{type: :literal, meta: %{value: mod}}) when is_atom(mod), do: mod
 
   def resolve_target(%Node{type: :call, meta: %{function: :__aliases__}, children: parts}) do
