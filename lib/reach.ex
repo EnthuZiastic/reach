@@ -995,12 +995,9 @@ defmodule Reach do
     # cond clauses, if/unless desugared :case branches, and comprehension
     # generators/filters all hold expressions whose value controls flow.
     # Their condition exprs must never be reported as dead even when pure.
-    Enum.reduce(all_nodes, MapSet.new(), fn node, acc ->
-      case branching_condition_nodes(node) do
-        [] -> acc
-        nodes -> Enum.reduce(nodes, acc, fn n, ids -> MapSet.put(ids, n.id) end)
-      end
-    end)
+    all_nodes
+    |> Enum.flat_map(&branching_condition_nodes/1)
+    |> MapSet.new(& &1.id)
   end
 
   defp branching_condition_nodes(%{
