@@ -1003,13 +1003,28 @@ defmodule Reach do
         end
       end)
 
+    # if/unless conditions — desugared to :case with desugared_from: :if/:unless;
+    # the condition is the first child of the :case node and controls branching,
+    # so it must never be reported as dead even if it is pure.
+    if_conditions =
+      all_nodes
+      |> Enum.filter(fn n ->
+        n.type == :case and n.meta[:desugared_from] in [:if, :unless]
+      end)
+      |> Enum.flat_map(fn case_node ->
+        case case_node.children do
+          [condition | _] -> Reach.IR.all_nodes(condition)
+          _ -> []
+        end
+      end)
+
     # Comprehension generators and filters
     comprehension_ids =
       all_nodes
       |> Enum.filter(&(&1.type in [:filter, :generator, :comprehension]))
       |> Enum.flat_map(&Reach.IR.all_nodes/1)
 
-    MapSet.new(cond_conditions ++ comprehension_ids, & &1.id)
+    MapSet.new(cond_conditions ++ if_conditions ++ comprehension_ids, & &1.id)
   end
 
   defp collect_impure_ids(all_nodes) do
@@ -1054,7 +1069,20 @@ defmodule Reach do
     :defguardp,
     :\\,
     :<<>>,
-    :when
+    :when,
+    # Ecto schema DSL — compile-time macros, return value is always discarded
+    :schema,
+    :embedded_schema,
+    :field,
+    :belongs_to,
+    :has_many,
+    :has_one,
+    :many_to_many,
+    :embeds_one,
+    :embeds_many,
+    :timestamps,
+    # Plug.Builder macro — compile-time, registers plugs as module attributes
+    :plug
   ]
 
   defp compiler_directive?(%{type: :call, meta: %{function: f}})
