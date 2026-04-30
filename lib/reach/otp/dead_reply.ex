@@ -3,6 +3,7 @@ defmodule Reach.OTP.DeadReply do
 
   alias Reach.IR
   alias Reach.IR.Node
+  alias Reach.OTP.Shared
 
   @doc """
   Finds GenServer.call sites where the reply value is discarded.
@@ -26,7 +27,7 @@ defmodule Reach.OTP.DeadReply do
       %{
         call_site: call,
         target: target,
-        location: location(call)
+        location: Shared.location(call)
       }
     end)
     |> Enum.uniq_by(& &1.location)
@@ -58,28 +59,8 @@ defmodule Reach.OTP.DeadReply do
     end
   end
 
-  defp call_target(%Node{children: [target | _]}) do
-    case target do
-      %Node{type: :literal, meta: %{value: mod}} when is_atom(mod) ->
-        mod
-
-      %Node{type: :var, meta: %{name: name}} ->
-        name
-
-      %Node{type: :call, meta: %{function: :__aliases__}, children: parts} ->
-        atoms =
-          Enum.map(parts, fn
-            %{type: :literal, meta: %{value: v}} when is_atom(v) -> v
-            _ -> nil
-          end)
-
-        if Enum.all?(atoms, & &1), do: Module.concat(atoms)
-
-      _ ->
-        nil
-    end
-  end
-
+  defp call_target(%Node{children: [%Node{type: :var, meta: %{name: name}} | _]}), do: name
+  defp call_target(%Node{children: [target | _]}), do: Shared.resolve_target(target)
   defp call_target(_), do: nil
 
   defp build_parent_map(all_nodes) do
@@ -89,14 +70,4 @@ defmodule Reach.OTP.DeadReply do
       {child.id, node}
     end
   end
-
-  defp location(%{source_span: %{file: file, start_line: line}}) do
-    "#{file}:#{line}"
-  end
-
-  defp location(%{source_span: %{start_line: line}}) do
-    "line #{line}"
-  end
-
-  defp location(_), do: "unknown"
 end
