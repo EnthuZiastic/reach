@@ -958,6 +958,85 @@ defmodule ReachTest do
       refute :is_integer in dead_fns
       refute :and in dead_ops
     end
+
+    test "if/unless conditions are not flagged as dead" do
+      graph =
+        Reach.string_to_graph!("""
+        def foo(x, y) do
+          if x == y do
+            :equal
+          else
+            :different
+          end
+        end
+
+        def bar(x) do
+          unless is_nil(x) do
+            x
+          else
+            :empty
+          end
+        end
+        """)
+
+      dead = Reach.dead_code(graph)
+      dead_ops = Enum.map(dead, & &1.meta[:operator])
+      dead_fns = Enum.map(dead, & &1.meta[:function])
+      refute :== in dead_ops
+      refute :is_nil in dead_fns
+    end
+
+    test "Ecto schema DSL macros inside schema block are not flagged as dead" do
+      graph =
+        Reach.string_to_graph!("""
+        defmodule User do
+          use Ecto.Schema
+
+          schema "users" do
+            field :name, :string
+            field :email, :string
+            belongs_to :org, Org
+            has_many :posts, Post
+            has_one :profile, Profile
+            many_to_many :groups, Group, join_through: "user_groups"
+            embeds_one :address, Address
+            embeds_many :tags, Tag
+            timestamps()
+          end
+        end
+        """)
+
+      dead = Reach.dead_code(graph)
+      dead_fns = Enum.map(dead, & &1.meta[:function])
+      refute :schema in dead_fns
+      refute :field in dead_fns
+      refute :belongs_to in dead_fns
+      refute :has_many in dead_fns
+      refute :has_one in dead_fns
+      refute :many_to_many in dead_fns
+      refute :embeds_one in dead_fns
+      refute :embeds_many in dead_fns
+      refute :timestamps in dead_fns
+    end
+
+    test "Plug.Builder `plug` calls at module level are not flagged as dead" do
+      graph =
+        Reach.string_to_graph!("""
+        defmodule MyRouter do
+          use Plug.Builder
+
+          plug :match
+          plug :dispatch
+
+          def match(conn, _opts), do: conn
+          def dispatch(conn, _opts), do: conn
+        end
+        """)
+
+      dead = Reach.dead_code(graph)
+      dead_fns = Enum.map(dead, & &1.meta[:function])
+      refute :plug in dead_fns
+    end
   end
 
   describe "higher-order function resolution" do

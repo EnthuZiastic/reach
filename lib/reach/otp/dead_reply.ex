@@ -59,6 +59,10 @@ defmodule Reach.OTP.DeadReply do
     end
   end
 
+  # Returns either a resolved module atom, or — when the target is a runtime
+  # var (e.g. `pid` from `pid = ...; GenServer.call(pid, ...)`) — the variable
+  # name. Both are reported in the finding so users can locate the call site;
+  # downstream consumers must not assume the value is always a module.
   defp call_target(%Node{children: [%Node{type: :var, meta: %{name: name}} | _]}), do: name
   defp call_target(%Node{children: [target | _]}), do: Shared.resolve_target(target)
   defp call_target(_), do: nil

@@ -618,11 +618,12 @@ defmodule Reach do
       |> MapSet.union(observable_ids)
 
     all = nodes(graph)
+    dsl_scope = build_dsl_scope(all)
 
     # Also mark parents of alive nodes as alive
-    alive_ids = expand_alive_to_parents(all, alive_ids)
+    alive_ids = expand_alive_to_parents(all, alive_ids, dsl_scope)
 
-    find_dead_nodes(all, alive_ids)
+    find_dead_nodes(all, alive_ids, dsl_scope)
   end
 
   defp observable_nodes(graph) do
@@ -758,11 +759,11 @@ defmodule Reach do
   defp match_label?({tag, _}, tag) when is_atom(tag), do: true
   defp match_label?(_, _), do: false
 
-  defp expand_alive_to_parents(all_nodes, alive_ids) do
-    expand_alive_to_parents(all_nodes, alive_ids, MapSet.size(alive_ids))
+  defp expand_alive_to_parents(all_nodes, alive_ids, dsl_scope) do
+    expand_alive_to_parents(all_nodes, alive_ids, dsl_scope, MapSet.size(alive_ids))
   end
 
-  defp expand_alive_to_parents(all_nodes, alive_ids, prev_size) do
+  defp expand_alive_to_parents(all_nodes, alive_ids, dsl_scope, prev_size) do
     # Mark parent nodes alive if any child is alive
     ids =
       Enum.reduce(all_nodes, alive_ids, fn node, ids ->
@@ -784,7 +785,7 @@ defmodule Reach do
     # Mark all descendants of compiler-directive nodes as alive
     ids =
       Enum.reduce(all_nodes, ids, fn node, ids ->
-        if compiler_directive?(node) do
+        if compiler_directive?(node, dsl_scope) do
           node
           |> Reach.IR.all_nodes()
           |> MapSet.new(& &1.id)
@@ -810,7 +811,7 @@ defmodule Reach do
     if MapSet.size(ids) == prev_size do
       ids
     else
-      expand_alive_to_parents(all_nodes, ids, MapSet.size(ids))
+      expand_alive_to_parents(all_nodes, ids, dsl_scope, MapSet.size(ids))
     end
   end
 
@@ -968,13 +969,13 @@ defmodule Reach do
 
   defp expand_match_children(_, alive), do: alive
 
-  defp find_dead_nodes(all_nodes, alive_ids) do
+  defp find_dead_nodes(all_nodes, alive_ids, dsl_scope) do
     impure_ids = collect_impure_ids(all_nodes)
     guard_ids = collect_guard_ids(all_nodes)
     cond_ids = collect_cond_condition_ids(all_nodes)
 
     all_nodes
-    |> Enum.filter(&candidate_for_dead?/1)
+    |> Enum.filter(&candidate_for_dead?(&1, dsl_scope))
     |> Enum.reject(fn node ->
       MapSet.member?(impure_ids, node.id) or
         MapSet.member?(alive_ids, node.id) or
@@ -991,41 +992,33 @@ defmodule Reach do
   end
 
   defp collect_cond_condition_ids(all_nodes) do
-    cond_conditions =
-      all_nodes
-      |> Enum.filter(fn n ->
-        n.type == :clause and n.meta[:kind] == :cond_clause
-      end)
-      |> Enum.flat_map(fn clause ->
-        case clause.children do
-          [condition | _] -> Reach.IR.all_nodes(condition)
-          _ -> []
-        end
-      end)
-
-    # if/unless conditions — desugared to :case with desugared_from: :if/:unless;
-    # the condition is the first child of the :case node and controls branching,
-    # so it must never be reported as dead even if it is pure.
-    if_conditions =
-      all_nodes
-      |> Enum.filter(fn n ->
-        n.type == :case and n.meta[:desugared_from] in [:if, :unless]
-      end)
-      |> Enum.flat_map(fn case_node ->
-        case case_node.children do
-          [condition | _] -> Reach.IR.all_nodes(condition)
-          _ -> []
-        end
-      end)
-
-    # Comprehension generators and filters
-    comprehension_ids =
-      all_nodes
-      |> Enum.filter(&(&1.type in [:filter, :generator, :comprehension]))
-      |> Enum.flat_map(&Reach.IR.all_nodes/1)
-
-    MapSet.new(cond_conditions ++ if_conditions ++ comprehension_ids, & &1.id)
+    # cond clauses, if/unless desugared :case branches, and comprehension
+    # generators/filters all hold expressions whose value controls flow.
+    # Their condition exprs must never be reported as dead even when pure.
+    Enum.reduce(all_nodes, MapSet.new(), fn node, acc ->
+      case branching_condition_nodes(node) do
+        [] -> acc
+        nodes -> Enum.reduce(nodes, acc, fn n, ids -> MapSet.put(ids, n.id) end)
+      end
+    end)
   end
+
+  defp branching_condition_nodes(%{
+         type: :clause,
+         meta: %{kind: :cond_clause},
+         children: [c | _]
+       }),
+       do: Reach.IR.all_nodes(c)
+
+  defp branching_condition_nodes(%{type: :case, meta: %{desugared_from: kind}, children: [c | _]})
+       when kind in [:if, :unless],
+       do: Reach.IR.all_nodes(c)
+
+  defp branching_condition_nodes(%{type: t} = node)
+       when t in [:filter, :generator, :comprehension],
+       do: Reach.IR.all_nodes(node)
+
+  defp branching_condition_nodes(_), do: []
 
   defp collect_impure_ids(all_nodes) do
     all_nodes
@@ -1038,14 +1031,16 @@ defmodule Reach do
     |> MapSet.new()
   end
 
-  defp candidate_for_dead?(%Node{type: t} = node)
+  defp candidate_for_dead?(%Node{type: t} = node, dsl_scope)
        when t in [:call, :binary_op, :unary_op, :match] do
-    pure?(node) and not compiler_directive?(node) and not pattern_context?(node)
+    pure?(node) and not compiler_directive?(node, dsl_scope) and not pattern_context?(node)
   end
 
-  defp candidate_for_dead?(_), do: false
+  defp candidate_for_dead?(_, _), do: false
 
-  @compiler_directives [
+  # Always-exempt compile-time keywords/macros — language-level constructs that
+  # never appear in normal expression position regardless of context.
+  @always_directives [
     :import,
     :alias,
     :require,
@@ -1069,10 +1064,16 @@ defmodule Reach do
     :defguardp,
     :\\,
     :<<>>,
-    :when,
-    # Ecto schema DSL — compile-time macros, return value is always discarded
-    :schema,
-    :embedded_schema,
+    :when
+  ]
+
+  # Ecto schema DSL block markers. Their bodies are scoped via dsl_scope.schema.
+  @ecto_schema_blocks [:schema, :embedded_schema]
+
+  # Ecto schema DSL macros — compile-time, return value discarded. Only treated
+  # as directives when nested inside a `schema do ... end` (or embedded_schema)
+  # block, to avoid suppressing user-defined functions sharing these names.
+  @ecto_dsl_macros [
     :field,
     :belongs_to,
     :has_many,
@@ -1080,20 +1081,55 @@ defmodule Reach do
     :many_to_many,
     :embeds_one,
     :embeds_many,
-    :timestamps,
-    # Plug.Builder macro — compile-time, registers plugs as module attributes
-    :plug
+    :timestamps
   ]
 
-  defp compiler_directive?(%{type: :call, meta: %{function: f}})
-       when f in @compiler_directives,
+  # `Plug.Builder.plug/1,2` — compile-time macro, only valid at module body
+  # level. Treated as a directive only when not nested inside a function body.
+  @plug_macros [:plug]
+
+  defp compiler_directive?(%{type: :call, meta: %{function: f}}, _)
+       when f in @always_directives,
        do: true
 
-  defp compiler_directive?(%{type: :call, meta: %{kind: :attribute}}), do: true
+  defp compiler_directive?(%{type: :call, meta: %{function: f}}, _)
+       when f in @ecto_schema_blocks,
+       do: true
 
-  defp compiler_directive?(%{type: :call, meta: %{function: :@}}), do: true
+  defp compiler_directive?(%{type: :call, meta: %{kind: :attribute}}, _), do: true
 
-  defp compiler_directive?(_), do: false
+  defp compiler_directive?(%{type: :call, meta: %{function: :@}}, _), do: true
+
+  defp compiler_directive?(%{type: :call, meta: %{function: f}, id: id}, %{schema: schema_ids})
+       when f in @ecto_dsl_macros and is_map(schema_ids),
+       do: MapSet.member?(schema_ids, id)
+
+  defp compiler_directive?(%{type: :call, meta: %{function: f}, id: id}, %{
+         function_body: fn_body_ids
+       })
+       when f in @plug_macros and is_map(fn_body_ids),
+       do: not MapSet.member?(fn_body_ids, id)
+
+  defp compiler_directive?(_, _), do: false
+
+  defp build_dsl_scope(all_nodes) do
+    %{
+      schema: collect_descendant_ids(all_nodes, &ecto_schema_block?/1),
+      function_body: collect_descendant_ids(all_nodes, &(&1.type == :function_def))
+    }
+  end
+
+  defp ecto_schema_block?(%{type: :call, meta: %{function: f}}) when f in @ecto_schema_blocks,
+    do: true
+
+  defp ecto_schema_block?(_), do: false
+
+  defp collect_descendant_ids(all_nodes, predicate) do
+    all_nodes
+    |> Enum.filter(predicate)
+    |> Enum.flat_map(&Reach.IR.all_nodes/1)
+    |> MapSet.new(& &1.id)
+  end
 
   defp pattern_context?(%{type: :binary_op, meta: %{operator: :<>}, children: children}) do
     Enum.any?(children, fn
