@@ -1,0 +1,210 @@
+{
+  "project": {
+    "name": "Reach",
+    "version": "1.8.0",
+    "description": "Program dependence graph for Elixir, Erlang, Gleam, JavaScript/TypeScript, and BEAM bytecode",
+    "package": "reach",
+    "language": "Elixir",
+    "elixir": "~> 1.18",
+    "tool_versions": "elixir 1.19.5-otp-27",
+    "license": "MIT",
+    "source_url": "https://github.com/elixir-vibe/reach",
+    "generated": "2026-04-30"
+  },
+  "structure": {
+    "lib_files": 62,
+    "test_files": 31,
+    "top_dirs": ["lib", "test", "assets", "priv", "config", ".github"],
+    "report_template": "priv/template.html.eex",
+    "asset_bundle": "priv/static/reach.{js,css}"
+  },
+  "entry_points": {
+    "library_api": "lib/reach.ex",
+    "interactive_report_task": "lib/mix/tasks/reach.ex",
+    "html_template": "priv/template.html.eex",
+    "frontend_root_component": "assets/js/components/ReachGraph.vue"
+  },
+  "pipeline": [
+    "Source (.ex/.erl/.gleam/.js/.ts/.beam)",
+    "Reach.Frontend.* -> IR (Reach.IR.Node)",
+    "Reach.ControlFlow -> CFG",
+    "Reach.Dominator + Reach.ControlDependence + Reach.DataDependence",
+    "Reach.ProgramDependence -> PDG",
+    "Reach.SystemDependence -> SDG (+ OTP + plugin edges)",
+    "Queries: backward_slice, forward_slice, taint_analysis, independent?"
+  ],
+  "core_modules": [
+    {"module": "Reach", "path": "lib/reach.ex", "purpose": "Public API surface"},
+    {"module": "Reach.IR", "path": "lib/reach/ir.ex", "purpose": "Common IR shape"},
+    {"module": "Reach.IR.Node", "path": "lib/reach/ir/node.ex", "purpose": "IR node struct"},
+    {"module": "Reach.IR.Helpers", "path": "lib/reach/ir/helpers.ex", "purpose": "IR helpers"},
+    {"module": "Reach.IR.Counter", "path": "lib/reach/ir/counter.ex", "purpose": "Node id counter"},
+    {"module": "Reach.Frontend.Elixir", "path": "lib/reach/frontend/elixir.ex", "purpose": "Elixir AST -> IR"},
+    {"module": "Reach.Frontend.Erlang", "path": "lib/reach/frontend/erlang.ex", "purpose": "Erlang abstract code -> IR"},
+    {"module": "Reach.Frontend.Gleam", "path": "lib/reach/frontend/gleam.ex", "purpose": "Gleam -> IR"},
+    {"module": "Reach.Frontend.JavaScript", "path": "lib/reach/frontend/javascript.ex", "purpose": "JS/TS -> IR"},
+    {"module": "Reach.Frontend.BEAM", "path": "lib/reach/frontend/beam.ex", "purpose": "BEAM bytecode -> IR (post macro-expansion)"},
+    {"module": "Reach.ControlFlow", "path": "lib/reach/control_flow.ex", "purpose": "IR -> per-function DAG CFG"},
+    {"module": "Reach.Dominator", "path": "lib/reach/dominator.ex", "purpose": "idom/postdom/dom-tree/DF"},
+    {"module": "Reach.ControlDependence", "path": "lib/reach/control_dependence.ex", "purpose": "Control dependence edges"},
+    {"module": "Reach.DataDependence", "path": "lib/reach/data_dependence.ex", "purpose": "Def-use chains"},
+    {"module": "Reach.SystemDependence", "path": "lib/reach/system_dependence.ex", "purpose": "SDG construction"},
+    {"module": "Reach.CallGraph", "path": "lib/reach/call_graph.ex", "purpose": "Call graph"},
+    {"module": "Reach.Effects", "path": "lib/reach/effects.ex", "purpose": "Effect classification: pure/io/read/write/send/exception/nif/unknown"},
+    {"module": "Reach.Concurrency", "path": "lib/reach/concurrency.ex", "purpose": "spawn/Task/monitor/supervisor"},
+    {"module": "Reach.HigherOrder", "path": "lib/reach/higher_order.ex", "purpose": "Higher-order analysis"},
+    {"module": "Reach.OTP", "path": "lib/reach/otp.ex", "purpose": "OTP-shape umbrella"},
+    {"module": "Reach.OTP.Coupling", "path": "lib/reach/otp/coupling.ex"},
+    {"module": "Reach.OTP.CrossProcess", "path": "lib/reach/otp/cross_process.ex"},
+    {"module": "Reach.OTP.DeadReply", "path": "lib/reach/otp/dead_reply.ex"},
+    {"module": "Reach.OTP.GenServer", "path": "lib/reach/otp/gen_server.ex"},
+    {"module": "Reach.OTP.GenStatem", "path": "lib/reach/otp/gen_statem.ex"},
+    {"module": "Reach.Plugin", "path": "lib/reach/plugin.ex", "purpose": "Plugin contract"},
+    {"module": "Reach.Plugins.Ash", "path": "lib/reach/plugins/ash.ex"},
+    {"module": "Reach.Plugins.Ecto", "path": "lib/reach/plugins/ecto.ex"},
+    {"module": "Reach.Plugins.GenStage", "path": "lib/reach/plugins/gen_stage.ex"},
+    {"module": "Reach.Plugins.Helpers", "path": "lib/reach/plugins/helpers.ex"},
+    {"module": "Reach.Plugins.Jido", "path": "lib/reach/plugins/jido.ex"},
+    {"module": "Reach.Plugins.JSON", "path": "lib/reach/plugins/json.ex"},
+    {"module": "Reach.Plugins.Oban", "path": "lib/reach/plugins/oban.ex"},
+    {"module": "Reach.Plugins.OpenTelemetry", "path": "lib/reach/plugins/open_telemetry.ex"},
+    {"module": "Reach.Plugins.Phoenix", "path": "lib/reach/plugins/phoenix.ex"},
+    {"module": "Reach.Plugins.Quickbeam", "path": "lib/reach/plugins/quickbeam.ex"},
+    {"module": "Reach.CLI.Format", "path": "lib/reach/cli/format.ex", "purpose": "Shared text/json/oneline formatting"},
+    {"module": "Reach.CLI.BoxartGraph", "path": "lib/reach/cli/boxart_graph.ex", "purpose": "Terminal graph rendering wrapper"},
+    {"module": "Reach.CLI.Project", "path": "lib/reach/cli/project.ex", "purpose": "Project loader for tasks"},
+    {"module": "Reach.Visualize", "path": "lib/reach/visualize.ex"},
+    {"module": "Reach.Visualize.ControlFlow", "path": "lib/reach/visualize/control_flow.ex", "purpose": "CFG -> blocks/edges"},
+    {"module": "Reach.Visualize.Helpers", "path": "lib/reach/visualize/helpers.ex", "purpose": "Source extraction, pattern rendering"},
+    {"module": "Reach.Graph", "path": "lib/reach/graph.ex"},
+    {"module": "Reach.Project", "path": "lib/reach/project.ex"}
+  ],
+  "mix_tasks": [
+    {"task": "mix reach", "path": "lib/mix/tasks/reach.ex", "purpose": "Interactive HTML report (CFG/call graph/data flow)"},
+    {"task": "mix reach.modules", "path": "lib/mix/tasks/reach.modules.ex", "purpose": "Module listing + complexity"},
+    {"task": "mix reach.coupling", "path": "lib/mix/tasks/reach.coupling.ex", "purpose": "Afferent/efferent/instability/circular deps"},
+    {"task": "mix reach.hotspots", "path": "lib/mix/tasks/reach.hotspots.ex", "purpose": "complexity x callers"},
+    {"task": "mix reach.depth", "path": "lib/mix/tasks/reach.depth.ex", "purpose": "Dominator-tree depth"},
+    {"task": "mix reach.effects", "path": "lib/mix/tasks/reach.effects.ex", "purpose": "Effect distribution"},
+    {"task": "mix reach.impact", "path": "lib/mix/tasks/reach.impact.ex", "purpose": "Change impact"},
+    {"task": "mix reach.deps", "path": "lib/mix/tasks/reach.deps.ex", "purpose": "Function deps"},
+    {"task": "mix reach.dead_code", "path": "lib/mix/tasks/reach.dead_code.ex", "purpose": "Unused pure expressions"},
+    {"task": "mix reach.smell", "path": "lib/mix/tasks/reach.smell.ex", "purpose": "Pipeline waste / redundant computation"},
+    {"task": "mix reach.flow", "path": "lib/mix/tasks/reach.flow.ex", "purpose": "Data flow / taint (--from/--to/--variable)"},
+    {"task": "mix reach.slice", "path": "lib/mix/tasks/reach.slice.ex", "purpose": "Backward/forward slice"},
+    {"task": "mix reach.graph", "path": "lib/mix/tasks/reach.graph.ex", "purpose": "Terminal CFG (boxart)"},
+    {"task": "mix reach.xref", "path": "lib/mix/tasks/reach.xref.ex", "purpose": "Cross-function data flow"},
+    {"task": "mix reach.concurrency", "path": "lib/mix/tasks/reach.concurrency.ex", "purpose": "Task/monitor/spawn + supervisor"},
+    {"task": "mix reach.boundaries", "path": "lib/mix/tasks/reach.boundaries.ex", "purpose": "Multi-effect functions"},
+    {"task": "mix reach.otp", "path": "lib/mix/tasks/reach.otp.ex", "purpose": "GenServer SM / ETS / proc-dict / missing handlers"},
+    {"task": "mix js.check", "path": "lib/mix/tasks/js.check.ex", "purpose": "Frontend lint/format gate"}
+  ],
+  "frontend_assets": {
+    "components": [
+      "assets/js/components/ReachGraph.vue",
+      "assets/js/components/CodeNode.vue",
+      "assets/js/components/CompactNode.vue"
+    ],
+    "package": "assets/package.json",
+    "lint_config": ["assets/oxlint.json", "assets/.oxfmtrc.json"],
+    "bundler": "volt (dev) -> priv/static/reach.{js,css}",
+    "layout_engine": "Vue Flow + ELK"
+  },
+  "tests": {
+    "count": 31,
+    "key_files": [
+      "test/visualize/block_quality_test.exs",
+      "test/visualize_test.exs",
+      "test/ir/ir_property_test.exs",
+      "test/control_flow/control_flow_test.exs",
+      "test/system_dependence_test.exs",
+      "test/otp_test.exs",
+      "test/smell_test.exs",
+      "test/query_test.exs",
+      "test/reach_test.exs"
+    ],
+    "frontend_tests": [
+      "test/frontend/elixir_test.exs (via test/ir/frontend_elixir_test.exs)",
+      "test/frontend/erlang_test.exs",
+      "test/frontend/javascript_test.exs",
+      "test/frontend/beam_test.exs",
+      "test/frontend/beam_source_span_test.exs"
+    ],
+    "plugin_tests": [
+      "test/plugins_test.exs",
+      "test/ash_plugin_test.exs",
+      "test/jido_plugin_test.exs",
+      "test/otel_plugin_test.exs",
+      "test/quickbeam_plugin_test.exs"
+    ],
+    "mix_task_tests": [
+      "test/mix_task_reach_test.exs",
+      "test/mix_task_modules_test.exs",
+      "test/mix_task_impact_test.exs",
+      "test/mix_task_slice_test.exs"
+    ]
+  },
+  "configuration": {
+    "mix_exs": "mix.exs",
+    "tool_versions": ".tool-versions",
+    "formatter": ".formatter.exs",
+    "credo": ".credo.exs",
+    "js_lint": "assets/oxlint.json",
+    "js_format": "assets/.oxfmtrc.json",
+    "package": "assets/package.json"
+  },
+  "documentation": [
+    {"file": "README.md", "topic": "Quick start, slicing/taint/independence/dead-code workflows"},
+    {"file": "AGENTS.md", "topic": "Authoritative Block Quality Acceptance Criteria + multi-clause rules + CLI table"},
+    {"file": "CHANGELOG.md", "topic": "Release history"},
+    {"file": "CLAUDE.md", "topic": "Repo-level Claude Code guidance"},
+    {"file": "LICENSE", "topic": "MIT"}
+  ],
+  "dependencies": {
+    "required": [
+      {"name": "libgraph", "version": "~> 0.16.0", "purpose": "Graph data structure"}
+    ],
+    "dev_test": [
+      {"name": "stream_data", "version": "~> 1.0", "purpose": "Property tests"},
+      {"name": "dialyxir", "version": "~> 1.4", "purpose": "Dialyzer"},
+      {"name": "credo", "version": "~> 1.7", "purpose": "Lint"},
+      {"name": "ex_ast", "version": "~> 0.1"},
+      {"name": "ex_dna", "version": "~> 1.1", "purpose": "Clone detection (mix ci)"},
+      {"name": "volt", "version": "~> 0.4", "purpose": "Asset bundler (dev)"},
+      {"name": "ex_doc", "version": "~> 0.34", "purpose": "Docs (dev)"}
+    ],
+    "optional": [
+      {"name": "jason", "version": "~> 1.0", "purpose": "JSON output"},
+      {"name": "boxart", "version": "~> 0.3", "purpose": "Terminal graphs"},
+      {"name": "makeup", "version": "~> 1.0", "purpose": "Syntax highlighting"},
+      {"name": "makeup_elixir", "version": "~> 1.0"},
+      {"name": "makeup_js", "version": "~> 0.1"},
+      {"name": "quickbeam", "version": "~> 0.10", "purpose": "Extra plugin"}
+    ]
+  },
+  "ci_alias": [
+    "compile --warnings-as-errors",
+    "format --check-formatted",
+    "js.check",
+    "credo --strict",
+    "ex_dna",
+    "dialyzer",
+    "test"
+  ],
+  "quick_start": [
+    "mix deps.get",
+    "mix compile",
+    "mix ci",
+    "mix test test/visualize/block_quality_test.exs",
+    "mix assets.build",
+    "mix reach <path-or-module>"
+  ],
+  "conventions": [
+    "mix ci is the contract — never bypass with --no-verify",
+    "Optional-dep code paths must work with the dep absent (Code.ensure_loaded?/1)",
+    "Multi-clause defs use build_multi_clause_cfg; do not filter clause nodes",
+    "Source spans come from the parser/compiler — never reconstruct via string matching",
+    "Frontends share IR contract; do not special-case downstream passes",
+    "Plugins attach edges after SDG build and must not mutate IR/CFG"
+  ]
+}
