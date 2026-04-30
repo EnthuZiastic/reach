@@ -515,7 +515,8 @@ defmodule Mix.Tasks.Reach.Otp do
   end
 
   defp extract_child_module(%{type: :call, meta: %{module: mod}})
-       when is_atom(mod) and not is_nil(mod), do: mod
+       when is_atom(mod) and not is_nil(mod),
+       do: mod
 
   defp extract_child_module(_), do: nil
 
