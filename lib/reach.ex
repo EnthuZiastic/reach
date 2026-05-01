@@ -1102,7 +1102,7 @@ defmodule Reach do
        }),
        do: not MapSet.member?(fn_body_ids, id)
 
-  defp compiler_directive?(_, %{}), do: false
+  defp compiler_directive?(_, %{schema: _, function_body: _}), do: false
 
   # Build descendant-id sets for the two AST contexts that gate Ecto/Plug DSL
   # exemption. Each set is computed lazily — when no block exists in the source
