@@ -22,6 +22,9 @@ defmodule Reach.OTP.DeadReply do
     all_nodes
     |> Enum.filter(fn n -> genserver_call?(n) and reply_discarded?(n, parent_map) end)
     |> Enum.map(fn call ->
+      # `target` may be a module atom, a runtime variable name, or `nil` —
+      # see `call_target/1`. Used only for display in the finding; do not
+      # treat as a guaranteed module reference.
       target = call_target(call)
 
       %{
@@ -63,6 +66,11 @@ defmodule Reach.OTP.DeadReply do
   # var (e.g. `pid` from `pid = ...; GenServer.call(pid, ...)`) — the variable
   # name. Both are reported in the finding so users can locate the call site;
   # downstream consumers must not assume the value is always a module.
+  #
+  # NOTE: clause order matters. The `:var` clause MUST come before the
+  # generic `[target | _]` clause — otherwise `Shared.resolve_target/1` would
+  # return `nil` for vars (it does not handle `:var` nodes), and the variable
+  # name would be lost from the finding.
   defp call_target(%Node{children: [%Node{type: :var, meta: %{name: name}} | _]}), do: name
   defp call_target(%Node{children: [target | _]}), do: Shared.resolve_target(target)
   defp call_target(_), do: nil
