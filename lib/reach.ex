@@ -1064,9 +1064,6 @@ defmodule Reach do
     :when
   ]
 
-  # Ecto schema DSL block markers. Their bodies are scoped via dsl_scope.schema.
-  @ecto_schema_blocks [:schema, :embedded_schema]
-
   # Ecto schema DSL macros — compile-time, return value discarded. Only treated
   # as directives when nested inside a `schema do ... end` (or embedded_schema)
   # block, to avoid suppressing user-defined functions sharing these names.
@@ -1081,16 +1078,15 @@ defmodule Reach do
     :timestamps
   ]
 
-  # `Plug.Builder.plug/1,2` — compile-time macro, only valid at module body
-  # level. Treated as a directive only when not nested inside a function body.
-  @plug_macros [:plug]
-
+  # dsl_scope is always a map built by build_dsl_scope/1. Callers must not pass
+  # nil — the gated clauses below would silently fall through to the catch-all
+  # `false`, masking the asymmetry vs. the always-true clauses.
   defp compiler_directive?(%{type: :call, meta: %{function: f}}, _)
        when f in @always_directives,
        do: true
 
   defp compiler_directive?(%{type: :call, meta: %{function: f}}, _)
-       when f in @ecto_schema_blocks,
+       when f in [:schema, :embedded_schema],
        do: true
 
   defp compiler_directive?(%{type: :call, meta: %{kind: :attribute}}, _), do: true
@@ -1098,17 +1094,20 @@ defmodule Reach do
   defp compiler_directive?(%{type: :call, meta: %{function: :@}}, _), do: true
 
   defp compiler_directive?(%{type: :call, meta: %{function: f}, id: id}, %{schema: schema_ids})
-       when f in @ecto_dsl_macros and is_map(schema_ids),
+       when f in @ecto_dsl_macros,
        do: MapSet.member?(schema_ids, id)
 
-  defp compiler_directive?(%{type: :call, meta: %{function: f}, id: id}, %{
+  defp compiler_directive?(%{type: :call, meta: %{function: :plug}, id: id}, %{
          function_body: fn_body_ids
-       })
-       when f in @plug_macros and is_map(fn_body_ids),
+       }),
        do: not MapSet.member?(fn_body_ids, id)
 
-  defp compiler_directive?(_, _), do: false
+  defp compiler_directive?(_, %{}), do: false
 
+  # Build descendant-id sets for the two AST contexts that gate Ecto/Plug DSL
+  # exemption. Each set is computed lazily — when no block exists in the source
+  # the corresponding scope is `MapSet.new()` without walking IR descendants,
+  # avoiding overhead for projects that use neither library.
   defp build_dsl_scope(all_nodes) do
     %{
       schema: collect_descendant_ids(all_nodes, &ecto_schema_block?/1),
@@ -1116,16 +1115,22 @@ defmodule Reach do
     }
   end
 
-  defp ecto_schema_block?(%{type: :call, meta: %{function: f}}) when f in @ecto_schema_blocks,
-    do: true
+  defp ecto_schema_block?(%{type: :call, meta: %{function: f}})
+       when f in [:schema, :embedded_schema],
+       do: true
 
   defp ecto_schema_block?(_), do: false
 
   defp collect_descendant_ids(all_nodes, predicate) do
-    all_nodes
-    |> Enum.filter(predicate)
-    |> Enum.flat_map(&Reach.IR.all_nodes/1)
-    |> MapSet.new(& &1.id)
+    case Enum.filter(all_nodes, predicate) do
+      [] ->
+        MapSet.new()
+
+      roots ->
+        roots
+        |> Enum.flat_map(&Reach.IR.all_nodes/1)
+        |> MapSet.new(& &1.id)
+    end
   end
 
   defp pattern_context?(%{type: :binary_op, meta: %{operator: :<>}, children: children}) do
